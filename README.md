@@ -1,4 +1,4 @@
-This is the official github repository for: https://arxiv.org/abs/2409.08307
+(This is a cloned version of) the official github repository for: https://arxiv.org/abs/2409.08307
 
 The MedSegMamba architecture code is in the models folder. MedSegMamba is the model described in the paper, where the VSS3D modules are only present in the bottleneck. MedSegMamba_v2 has not been formally tested and allows VSS3D modules to replace skip connections between the encoder and decoder.
 
