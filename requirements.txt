@@ -1,0 +1,8 @@
+torch
+torchaudio
+torchvision
+matplotlib
+numpy-hilbert-curve
+timm
+mamba-ssm
+ipdb
