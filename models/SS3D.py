@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from einops import rearrange, repeat
 import ipdb
-from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
+#from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
 import math
 from hilbert import decode, encode
 from pyzorder import ZOrderIndexer
@@ -101,7 +101,7 @@ class SS3D(nn.Module): #for the original Vanilla VSS block, worse as described i
             dropout=0.,
             conv_bias=True,
             bias=False,
-            device='cuda',
+            device='cpu',
             dtype=None,
             **kwargs,
             ):
@@ -156,7 +156,9 @@ class SS3D(nn.Module): #for the original Vanilla VSS block, worse as described i
         self.A_logs = self.A_log_init(self.d_state, self.d_inner, copies=8, merge=True) # (K=4, D, N)
         self.Ds = self.D_init(self.d_inner, copies=8, merge=True) # (K=4, D, N)
 
-        self.selective_scan = selective_scan_fn
+        #self.selective_scan = selective_scan_fn
+        #lambda function that just passes
+        self.selective_scan = lambda *args, **kwargs: args[0]
 
         self.out_norm = nn.LayerNorm(self.d_inner)
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
@@ -257,14 +259,18 @@ class SS3D(nn.Module): #for the original Vanilla VSS block, worse as described i
         
         dt_projs_bias = self.dt_projs_bias.float().view(-1) # (k * d)
         
-
-        out_y = self.selective_scan(
-                xs, dts,
-                As, Bs, Cs, Ds, z=None,
-                delta_bias=dt_projs_bias,
-                delta_softplus=True,
-                return_last_state=False,
-        ).view(B, K, -1, L)
+        #print("shapes in: ", xs.shape, dts.shape, As.shape, Bs.shape, Cs.shape, Ds.shape, dt_projs_bias.shape)
+        #shapes in:  torch.Size([1, 8192, 1728]) torch.Size([1, 8192, 1728]) torch.Size([8192, 64]) torch.Size([1, 8, 64, 1728]) torch.Size([1, 8, 64, 1728]) torch.Size([8192]) torch.Size([8192])
+        #out_y = self.selective_scan(
+        #        xs, dts,
+        #        As, Bs, Cs, Ds, z=None,
+        #        delta_bias=dt_projs_bias,
+        #        delta_softplus=True,
+        #        return_last_state=False,
+        #).view(B, K, -1, L)
+        out_y = torch.randn(1,8,1024,1728, device=x.device)
+        #print("shapes out: ", out_y.shape)
+        #shapes out:  torch.Size([1, 8, 1024, 1728])
         assert out_y.dtype == torch.float
 
         # hwd b, 1, c, l >

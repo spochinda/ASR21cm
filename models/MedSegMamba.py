@@ -3,7 +3,7 @@ import ipdb
 import torch
 import torch.nn as nn
 import sys
-sys.path.append('/cosma/apps/dp140/dc-poch1/venvs/cosmicdawn/lib/python3.12/site-packages/MedSegMamba/')
+sys.path.append('/home/sp2053/venvs/ASR21cm/lib/python3.11/site-packages/ASR21cm/')
 try:
     # from flopth import flopth
     from fvcore.nn import FlopCountAnalysis
@@ -570,6 +570,7 @@ class modified_net(nn.Module):
         return d1
     
 if __name__=='__main__':
-    test_input = torch.randn(1,1,96,96,96)
-    model = modified_net()
+    test_input = torch.randn(1,1,96,96,96)#.cuda()
+    model = modified_net()#.cuda()
     out = model(test_input)
+    print(out.shape)
