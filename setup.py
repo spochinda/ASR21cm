@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 
-version_file = 'basicsrexamples/version.py'
+version_file = 'ASR21cm/version.py'
 
 
 def readme():
@@ -82,7 +82,7 @@ def get_requirements(filename='requirements.txt'):
 if __name__ == '__main__':
     write_version_py()
     setup(
-        name='basicsrexamples',
+        name='ASR21cm',
         version=get_version(),
         description='BasicSR Examples',
         long_description=readme(),
