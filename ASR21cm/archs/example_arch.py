@@ -35,8 +35,7 @@ class ExampleArch(nn.Module):
         self.lrelu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
 
         # initialization
-        default_init_weights(
-            [self.conv1, self.conv2, self.conv3, self.upconv1, self.upconv2, self.conv_hr, self.conv_last], 0.1)
+        default_init_weights([self.conv1, self.conv2, self.conv3, self.upconv1, self.upconv2, self.conv_hr, self.conv_last], 0.1)
 
     def forward(self, x):
         feat = self.lrelu(self.conv1(x))

@@ -22,10 +22,7 @@ if __name__ == '__main__':
     """
     os.makedirs('datasets/example', exist_ok=True)
 
-    urls = [
-        'https://github.com/xinntao/BasicSR-examples/releases/download/0.0.0/BSDS100.zip',
-        'https://github.com/xinntao/BasicSR-examples/releases/download/0.0.0/Set5.zip'
-    ]
+    urls = ['https://github.com/xinntao/BasicSR-examples/releases/download/0.0.0/BSDS100.zip', 'https://github.com/xinntao/BasicSR-examples/releases/download/0.0.0/Set5.zip']
     datasets = ['BSDS100', 'Set5']
     for url, dataset in zip(urls, datasets):
         main(url, dataset)

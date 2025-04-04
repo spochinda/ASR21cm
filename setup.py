@@ -82,26 +82,11 @@ def get_requirements(filename='requirements.txt'):
 if __name__ == '__main__':
     write_version_py()
     setup(
-        name='ASR21cm',
-        version=get_version(),
-        description='BasicSR Examples',
-        long_description=readme(),
-        long_description_content_type='text/markdown',
-        author='Xintao Wang',
-        author_email='xintao.wang@outlook.com',
-        keywords='computer vision, pytorch, basicsr, image restoration, super-resolution',
-        url='https://github.com/xinntao/BasicSR-examples',
-        include_package_data=True,
-        packages=find_packages(exclude=('options', 'datasets', 'experiments', 'results', 'tb_logger', 'wandb')),
-        classifiers=[
+        name='ASR21cm', version=get_version(), description='BasicSR Examples', long_description=readme(), long_description_content_type='text/markdown', author='Xintao Wang', author_email='xintao.wang@outlook.com', keywords='computer vision, pytorch, basicsr, image restoration, super-resolution', url='https://github.com/xinntao/BasicSR-examples', include_package_data=True, packages=find_packages(exclude=('options', 'datasets', 'experiments', 'results', 'tb_logger', 'wandb')), classifiers=[
             'Development Status :: 4 - Beta',
             'License :: OSI Approved :: Apache Software License',
             'Operating System :: OS Independent',
             'Programming Language :: Python :: 3',
             'Programming Language :: Python :: 3.7',
             'Programming Language :: Python :: 3.8',
-        ],
-        license='BSD-3-Clause License',
-        setup_requires=['cython', 'numpy'],
-        install_requires=get_requirements(),
-        zip_safe=False)
+        ], license='BSD-3-Clause License', setup_requires=['cython', 'numpy'], install_requires=get_requirements(), zip_safe=False)

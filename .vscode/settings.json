@@ -1,10 +1,7 @@
 {
     "files.trimTrailingWhitespace": true,
-    "editor.wordWrap": "on",
-    "editor.rulers": [
-        80,
-        120
-    ],
+    "editor.wordWrap": "off",
+    "editor.rulers": [],
     "editor.renderWhitespace": "all",
     "editor.renderControlCharacters": true,
     "python.formatting.provider": "yapf",
