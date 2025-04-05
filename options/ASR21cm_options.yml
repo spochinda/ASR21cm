@@ -26,7 +26,7 @@ datasets:
     # data loader
     use_shuffle: true
     num_worker_per_gpu: 3
-    batch_size_per_gpu: 1 #can only run 1 batch size per gpu because dataloader draws a different scale for each sample
+    batch_size_per_gpu: 1
     dataset_enlarge_ratio: 10
     prefetch_mode: ~
 

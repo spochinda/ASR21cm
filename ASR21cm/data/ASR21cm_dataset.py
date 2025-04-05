@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import SR21cm.utils as utils
 import torch
+from functools import partial
 from scipy.io import loadmat
 
 from basicsr.utils.registry import DATASET_REGISTRY
@@ -52,38 +53,12 @@ class Custom21cmDataset(torch.utils.data.Dataset):
     @torch.no_grad()
     def __getitem__(self, idx):
         assert hasattr(self, 'df'), 'DataFrame not found. Please run getDataFrame() first.'
-        T21 = self.dataset.tensors[0][idx].unsqueeze(0).to(self.device)
-        delta = self.dataset.tensors[1][idx].unsqueeze(0).to(self.device)
-        vbv = self.dataset.tensors[2][idx].unsqueeze(0).to(self.device)
-        labels = self.dataset.tensors[3][idx].unsqueeze(0).to(self.device)
+        T21 = self.dataset.tensors[0][idx]
+        delta = self.dataset.tensors[1][idx]
+        vbv = self.dataset.tensors[2][idx]
+        labels = self.dataset.tensors[3][idx]
 
-        T21 = utils.get_subcubes(cubes=T21, cut_factor=self.cut_factor)
-        delta = utils.get_subcubes(cubes=delta, cut_factor=self.cut_factor)
-        vbv = utils.get_subcubes(cubes=vbv, cut_factor=self.cut_factor)
-        b, c, h, w, d = T21.shape
-        scale_factor = np.random.rand(1)[0] * (self.scale_max - self.scale_min) + self.scale_min
-        while (round(h / scale_factor) / 4) % 2 != 0:
-            scale_factor = np.random.rand(1)[0] * (self.scale_max - self.scale_min) + self.scale_min
-        h_lr = round(h / scale_factor)
-        T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
-        T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=self.n_augment)
-        T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-        T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-        T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
-        T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
-        delta, _, _ = utils.normalize(delta, mode='standard')
-        vbv, _, _ = utils.normalize(vbv, mode='standard')
-        if self.one_box:
-            T21 = T21[:1]
-            delta = delta[:1]
-            vbv = vbv[:1]
-            T21_lr = T21_lr[:1]
-            labels = labels[:1]
-        # return T21, delta, vbv, labels#T21_lr, labels
-        return {
-            'lq': T21_lr,
-            'gt': T21,
-        }  # 'lq_path': gt_path, 'gt_path': gt_path}
+        return [T21, delta, vbv, labels]
 
     def getDataFrame(self):
         rows = []
@@ -153,3 +128,104 @@ class Custom21cmDataset(torch.utils.data.Dataset):
         self.dataset = torch.utils.data.TensorDataset(T21, delta, vbv, labels)
 
         return self.dataset
+
+
+def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box):
+    T21, delta, vbv, labels = zip(*batch)
+    T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
+    delta = torch.concatenate(delta, dim=0).unsqueeze(1)
+    vbv = torch.concatenate(vbv, dim=0).unsqueeze(1)
+    labels = labels  # ##
+
+    T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
+    delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
+    vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
+
+    b, c, h, w, d = T21.shape
+    scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
+    while (round(h / scale_factor) / 4) % 2 != 0:
+        scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
+    h_lr = round(h / scale_factor)
+    T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
+    T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
+    T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+    T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+    T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
+    T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
+    delta, _, _ = utils.normalize(delta, mode='standard')
+    vbv, _, _ = utils.normalize(vbv, mode='standard')
+    if one_box:
+        T21 = T21[:1]
+        delta = delta[:1]
+        vbv = vbv[:1]
+        T21_lr = T21_lr[:1]
+        labels = labels[:1]
+    return {'lq': T21_lr, 'gt': T21}
+
+
+def create_collate_fn(opt):
+    return partial(collate_fn, cut_factor=opt['cut_factor'], scale_min=opt['scale_min'], scale_max=opt['scale_max'], n_augment=opt['n_augment'], one_box=opt['one_box'])
+
+
+"""def create_collate_fn(opt):
+    cut_factor  = opt['cut_factor']
+    scale_min = opt['scale_min']
+    scale_max = opt['scale_max']
+    n_augment = opt['n_augment']
+    one_box = opt['one_box']
+    def collate_fn(batch):
+        T21, delta, vbv, labels = zip(*batch)
+        T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
+        delta = torch.concatenate(delta, dim=0).unsqueeze(1)
+        vbv = torch.concatenate(vbv, dim=0).unsqueeze(1)
+        labels = labels # ##
+
+        T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
+        delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
+        vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
+
+        b, c, h, w, d = T21.shape
+        scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
+        while (round(h / scale_factor) / 4) % 2 != 0:
+            scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
+        h_lr = round(h / scale_factor)
+        T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
+        T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
+        T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+        T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+        T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
+        T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
+        delta, _, _ = utils.normalize(delta, mode='standard')
+        vbv, _, _ = utils.normalize(vbv, mode='standard')
+        if one_box:
+            T21 = T21[:1]
+            delta = delta[:1]
+            vbv = vbv[:1]
+            T21_lr = T21_lr[:1]
+            labels = labels[:1]
+        return {'lq': T21_lr, 'gt': T21}
+    return collate_fn
+"""
+if __name__ == '__main__':
+
+    # Example usage
+    opt = {
+        'dataroot_gt': '/Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes/',
+        'dataroot_IC': '/Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes/',
+        'redshifts': [
+            10,
+        ],
+        'IC_seeds': [0, 1, 2, 3],
+        'Npix': 256,
+        'cut_factor': 1,
+        'scale_max': 4,
+        'scale_min': 1,
+        'n_augment': 1,
+        'one_box': False,
+    }
+    dataset = Custom21cmDataset(opt)
+    dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=1, shuffle=True, collate_fn=create_collate_fn(opt=opt))
+    iterator = iter(dataloader)
+    batch = next(iterator)
+    print(batch['lq'].shape)
+    print(batch['gt'].shape)

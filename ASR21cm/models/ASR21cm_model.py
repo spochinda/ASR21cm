@@ -63,9 +63,6 @@ class ASR21cmModel(SRModel):
             self.gt = data['gt'].to(self.device)
 
     def optimize_parameters(self, current_iter):
-        # squeeze first dim
-        self.lq = self.lq.squeeze(0)
-        self.gt = self.gt.squeeze(0)
         b, c, h, w, d = self.gt.shape
         xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)
         xyz_hr = xyz_hr.view(1, -1, 3)
