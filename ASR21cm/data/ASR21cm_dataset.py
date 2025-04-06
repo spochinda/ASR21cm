@@ -122,7 +122,7 @@ class Custom21cmDataset(torch.utils.data.Dataset):
             vbv_cube = torch.from_numpy(vbv_cube).to(torch.float32).unsqueeze(0).unsqueeze(0)
             vbv = torch.cat([vbv, vbv_cube], dim=0)
 
-            label = torch.as_tensor(label, dtype=torch.float32, device='cpu')
+            label = torch.as_tensor(label, dtype=torch.float32, device='cpu').unsqueeze(0).unsqueeze(0)
             labels = torch.cat([labels, label], dim=0)
 
         self.dataset = torch.utils.data.TensorDataset(T21, delta, vbv, labels)
@@ -135,15 +135,19 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box):
     T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
     delta = torch.concatenate(delta, dim=0).unsqueeze(1)
     vbv = torch.concatenate(vbv, dim=0).unsqueeze(1)
-    labels = labels  # ##
+    labels = torch.concatenate(labels, dim=0)
+    b, label_dim = labels.shape
+    expansion_factor = 2**(3 * cut_factor)
 
     T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
     delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
     vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
+    labels = labels.repeat(1, expansion_factor)
+    labels = labels.view(b * expansion_factor, label_dim)
 
     b, c, h, w, d = T21.shape
     scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
-    while (round(h / scale_factor) / 4) % 2 != 0:
+    while (round(h / scale_factor) / 4) % 2 != 0:  # hardcoded 4 because of the 4x downsampling
         scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
     h_lr = round(h / scale_factor)
     T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')

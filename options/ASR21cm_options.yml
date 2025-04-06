@@ -13,20 +13,20 @@ datasets:
     dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes/
     dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes/
     redshifts: [10,]
-    IC_seeds: [0, 1]
+    IC_seeds: [0,]
     Npix: 256
     cut_factor: 1
     scale_max: 4.5
     scale_min: 1.1
     n_augment: 1
-    one_box: true
+    one_box: false
     io_backend:
       type: disk
 
     # data loader
     use_shuffle: true
     num_worker_per_gpu: 3
-    batch_size_per_gpu: 1
+    batch_size_per_gpu: 4
     dataset_enlarge_ratio: 10
     prefetch_mode: ~
 
