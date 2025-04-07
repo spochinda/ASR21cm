@@ -6,6 +6,10 @@ wandb/*
 tmp/*
 
 *.DS_Store
+# Slurm job output files and submission scripts
+slurm*
+*.err
+*.out
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

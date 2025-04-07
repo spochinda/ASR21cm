@@ -164,52 +164,13 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box):
         vbv = vbv[:1]
         T21_lr = T21_lr[:1]
         labels = labels[:1]
-    return {'lq': T21_lr, 'gt': T21}
+    return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
 
 
 def create_collate_fn(opt):
     return partial(collate_fn, cut_factor=opt['cut_factor'], scale_min=opt['scale_min'], scale_max=opt['scale_max'], n_augment=opt['n_augment'], one_box=opt['one_box'])
 
 
-"""def create_collate_fn(opt):
-    cut_factor  = opt['cut_factor']
-    scale_min = opt['scale_min']
-    scale_max = opt['scale_max']
-    n_augment = opt['n_augment']
-    one_box = opt['one_box']
-    def collate_fn(batch):
-        T21, delta, vbv, labels = zip(*batch)
-        T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
-        delta = torch.concatenate(delta, dim=0).unsqueeze(1)
-        vbv = torch.concatenate(vbv, dim=0).unsqueeze(1)
-        labels = labels # ##
-
-        T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
-        delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
-        vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
-
-        b, c, h, w, d = T21.shape
-        scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
-        while (round(h / scale_factor) / 4) % 2 != 0:
-            scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
-        h_lr = round(h / scale_factor)
-        T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
-        T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
-        T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-        T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-        T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
-        T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
-        delta, _, _ = utils.normalize(delta, mode='standard')
-        vbv, _, _ = utils.normalize(vbv, mode='standard')
-        if one_box:
-            T21 = T21[:1]
-            delta = delta[:1]
-            vbv = vbv[:1]
-            T21_lr = T21_lr[:1]
-            labels = labels[:1]
-        return {'lq': T21_lr, 'gt': T21}
-    return collate_fn
-"""
 if __name__ == '__main__':
 
     # Example usage

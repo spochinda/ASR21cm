@@ -12,6 +12,7 @@ from typing import Callable
 
 try:
     from mamba_ssm.ops.selective_scan_interface import selective_scan_fn  # selective_scan_ref
+    test_mode = False
 except Exception as e:
     print(e)
     print('Selective scan not available, using reference implementation and enabling test mode')
@@ -1072,13 +1073,13 @@ class MambaIR(nn.Module):
         x = self.pos_drop(x)
 
         for i, layer in enumerate(self.layers):
-            print(f"before layer: x size: {x_size}, x shape: {x.shape}")
+            print(f'before layer: x size: {x_size}, x shape: {x.shape}')
             x = layer(x, x_size)
-            print(f"after layer: x size: {x_size}, x shape: {x.shape}")
+            print(f'after layer: x size: {x_size}, x shape: {x.shape}')
 
         x = self.norm(x)  # b seq_len c
         x = self.patch_unembed(x, x_size)
-        print(f"after unembed: x size: {x_size}, x shape: {x.shape}")
+        print(f'after unembed: x size: {x_size}, x shape: {x.shape}')
 
         return x
 
@@ -1086,13 +1087,13 @@ class MambaIR(nn.Module):
         self.mean = self.mean.type_as(x)
         x = (x - self.mean) * self.img_range
         # for lightweight SR
-        print(f"before conv_first: x size: {x.shape}")
+        print(f'before conv_first: x size: {x.shape}')
         x = self.conv_first(x)
-        print(f"after conv_first: x size: {x.shape}")
+        print(f'after conv_first: x size: {x.shape}')
         x_after_body = self.forward_features(x)
         x_after_body = self.conv_after_body(x_after_body)
         x = x_after_body + x
-        print(f"after conv_after_body: x size: {x.shape}")
+        print(f'after conv_after_body: x size: {x.shape}')
         x = self.upsample(x)
         x = x / self.img_range + self.mean
 
