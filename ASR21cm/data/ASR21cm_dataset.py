@@ -32,6 +32,7 @@ class Custom21cmDataset(torch.utils.data.Dataset):
     def __init__(self, opt, device='cpu'):
 
         self.device = device
+        self.opt = opt
         self.path_T21 = opt['dataroot_gt']
         self.path_IC = opt['dataroot_IC']
 
@@ -164,6 +165,8 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box):
         vbv = vbv[:1]
         T21_lr = T21_lr[:1]
         labels = labels[:1]
+        T21_lr_mean = T21_lr_mean[:1]
+        T21_lr_std = T21_lr_std[:1]
     return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
 
 

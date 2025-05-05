@@ -5,12 +5,9 @@ import time
 import torch
 from os import path as osp
 
-# import ASR21cm.archs
-# import ASR21cm.data
-# import ASR21cm.losses
-# import ASR21cm.models
-from ASR21cm.data import build_dataloader, build_dataset
+from ASR21cm.data import build_dataloader
 from ASR21cm.data.ASR21cm_dataset import create_collate_fn
+from basicsr.data import build_dataset
 from basicsr.data.data_sampler import EnlargedSampler
 from basicsr.data.prefetch_dataloader import CPUPrefetcher, CUDAPrefetcher
 from basicsr.models import build_model

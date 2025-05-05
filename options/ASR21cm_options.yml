@@ -19,14 +19,14 @@ datasets:
     scale_max: 4.5
     scale_min: 1.1
     n_augment: 1
-    one_box: false
+    one_box: true
     io_backend:
       type: disk
 
     # data loader
     use_shuffle: true
     num_worker_per_gpu: 3
-    batch_size_per_gpu: 4
+    batch_size_per_gpu: 1
     dataset_enlarge_ratio: 10
     prefetch_mode: ~
 
@@ -49,11 +49,12 @@ datasets:
 
 # network structures
 network_g:
-  hr_size: 128 # Npix / 2**cut_factor
+  # hr_size: 128 # Npix / 2**cut_factor
   type: ArSSR
-  dim: 8
-  decoder_depth: 4
-  decoder_width: 8
+  dim: 2 #  8
+  decoder_depth: 2 # 4
+  decoder_width: 2 # 8
+  use_checkpoint: false
 
 # path
 path:
@@ -83,9 +84,12 @@ train:
     loss_weight: 1.0
 
 # validation settings (temporarily disabled)
-# val:
-#  val_freq: !!float 5e3
-#  save_img: false
+val:
+ val_freq: !!float 5e3
+ save_img: true
+ metrics:
+  rmse:
+    type: calculate_rmse
 
 # logging settings
 logger:

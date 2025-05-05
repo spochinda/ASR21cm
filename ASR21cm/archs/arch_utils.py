@@ -357,7 +357,7 @@ class VSSBlock3D(nn.Module):
 
         self.skip_scale1 = nn.Parameter(torch.ones(hidden_dim))  # added
         self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
-        self.conv_blk = CAB(hidden_dim, False)
+        self.conv_blk = CAB(hidden_dim)
         self.ln_2 = nn.LayerNorm(hidden_dim)
 
     def forward(self, input: torch.Tensor, x_size):
@@ -390,28 +390,41 @@ class BasicLayer(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
     """
 
-    def __init__(self, dim, input_resolution, depth, drop_path=0., d_state=16, mlp_ratio=2., norm_layer=nn.LayerNorm, downsample=None, is_light_sr=False):
+    def __init__(self, dim, depth, drop_path=0., d_state=16, mlp_ratio=2., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, is_light_sr=False):
 
         super().__init__()
         self.dim = dim
-        self.input_resolution = input_resolution
+        # self.input_resolution = input_resolution
         self.depth = depth
         self.mlp_ratio = mlp_ratio
+        self.use_checkpoint = use_checkpoint
 
         # build blocks
         self.blocks = nn.ModuleList()
         for i in range(depth):
-            self.blocks.append(VSSBlock3D(hidden_dim=dim, drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path, norm_layer=nn.LayerNorm, attn_drop_rate=0, d_state=d_state, expansion_factor=self.mlp_ratio, input_resolution=input_resolution, is_light_sr=is_light_sr))
+            self.blocks.append(VSSBlock3D(
+                hidden_dim=dim,
+                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                norm_layer=nn.LayerNorm,
+                attn_drop_rate=0,
+                d_state=d_state,
+                expansion_factor=self.mlp_ratio,
+                is_light_sr=is_light_sr,
+            ))  # input_resolution=input_resolution, ))
 
         # patch merging layer
         if downsample is not None:
-            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
+            self.downsample = downsample(  # input_resolution,
+                dim=dim, norm_layer=norm_layer)
         else:
             self.downsample = None
 
     def forward(self, x, x_size):
         for i, blk in enumerate(self.blocks):
-            x = blk(x, x_size)
+            if self.use_checkpoint:
+                x = torch.utils.checkpoint.checkpoint(blk, x, x_size)
+            else:
+                x = blk(x, x_size)
         if self.downsample is not None:
             x = self.downsample(x)
         return x
@@ -434,21 +447,42 @@ class ResidualGroup(nn.Module):
         resi_connection: The convolutional block before residual connection.
     """
 
-    def __init__(self, dim, input_resolution, depth, d_state=16, mlp_ratio=4., drop_path=0., norm_layer=nn.LayerNorm, downsample=None, img_size=None, patch_size=None, is_light_sr=False):
+    def __init__(
+            self,
+            dim,  # input_resolution,
+            depth,
+            d_state=16,
+            mlp_ratio=4.,
+            drop_path=0.,
+            norm_layer=nn.LayerNorm,
+            downsample=None,  # img_size=None, patch_size=None,
+            use_checkpoint=False,
+            is_light_sr=False):
         super(ResidualGroup, self).__init__()
 
         self.dim = dim
-        self.input_resolution = input_resolution  # [64, 64]
+        # self.input_resolution = input_resolution  # [64, 64]
 
-        self.residual_group = BasicLayer(dim=dim, input_resolution=input_resolution, depth=depth, d_state=d_state, mlp_ratio=mlp_ratio, drop_path=drop_path, norm_layer=norm_layer, downsample=downsample, is_light_sr=is_light_sr)
+        self.residual_group = BasicLayer(
+            dim=dim,  # input_resolution=input_resolution,
+            depth=depth,
+            d_state=d_state,
+            mlp_ratio=mlp_ratio,
+            drop_path=drop_path,
+            norm_layer=norm_layer,
+            downsample=downsample,
+            use_checkpoint=use_checkpoint,
+            is_light_sr=is_light_sr)
 
         # build the last conv layer in each residual state space group
 
         self.conv = nn.Conv3d(dim, dim, 3, 1, 1)
 
-        self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim, norm_layer=None)
+        self.patch_embed = PatchEmbed(  # img_size=img_size, patch_size=patch_size,
+            in_chans=0, embed_dim=dim, norm_layer=None)
 
-        self.patch_unembed = PatchUnEmbed(img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim, norm_layer=None)
+        self.patch_unembed = PatchUnEmbed(  # img_size=img_size, patch_size=patch_size,
+            in_chans=0, embed_dim=dim, norm_layer=None)
 
     def forward(self, x, x_size):
         return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size))) + x
@@ -474,7 +508,6 @@ class CAB(nn.Module):
 
     def __init__(self, num_feat, compress_ratio=3, squeeze_factor=2):
         super(CAB, self).__init__()
-
         self.cab = nn.Sequential(nn.Conv3d(num_feat, num_feat // compress_ratio, 3, 1, 1), nn.GELU(), nn.Conv3d(num_feat // compress_ratio, num_feat, 3, 1, 1), ChannelAttention(num_feat, squeeze_factor))
 
     def forward(self, x):
@@ -524,15 +557,19 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
+    def __init__(
+            self,  # img_size=224, patch_size=4,
+            in_chans=3,
+            embed_dim=96,
+            norm_layer=None):
         super().__init__()
-        img_size = to_3tuple(img_size)
-        patch_size = to_3tuple(patch_size)
-        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.patches_resolution = patches_resolution
-        self.num_patches = patches_resolution[0] * patches_resolution[1] * patches_resolution[2]
+        # img_size = to_3tuple(img_size)
+        # patch_size = to_3tuple(patch_size)
+        # patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
+        # self.img_size = img_size
+        # self.patch_size = patch_size
+        # self.patches_resolution = patches_resolution
+        # self.num_patches = patches_resolution[0] * patches_resolution[1] * patches_resolution[2]
 
         self.in_chans = in_chans
         self.embed_dim = embed_dim
@@ -548,12 +585,12 @@ class PatchEmbed(nn.Module):
             x = self.norm(x)
         return x
 
-    def flops(self):
-        flops = 0
-        h, w = self.img_size
-        if self.norm is not None:
-            flops += h * w * self.embed_dim
-        return flops
+    # def flops(self):
+    #    flops = 0
+    #    h, w = self.img_size
+    #    if self.norm is not None:
+    #        flops += h * w * self.embed_dim
+    #    return flops
 
 
 class PatchUnEmbed(nn.Module):
@@ -567,15 +604,19 @@ class PatchUnEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
+    def __init__(
+            self,  # img_size=224, patch_size=4,
+            in_chans=3,
+            embed_dim=96,
+            norm_layer=None):
         super().__init__()
-        img_size = to_3tuple(img_size)
-        patch_size = to_3tuple(patch_size)
-        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.patches_resolution = patches_resolution
-        self.num_patches = patches_resolution[0] * patches_resolution[1] * patches_resolution[2]
+        # img_size = to_3tuple(img_size)
+        # patch_size = to_3tuple(patch_size)
+        # patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
+        # self.img_size = img_size
+        # self.patch_size = patch_size
+        # self.patches_resolution = patches_resolution
+        # self.num_patches = patches_resolution[0] * patches_resolution[1] * patches_resolution[2]
 
         self.in_chans = in_chans
         self.embed_dim = embed_dim
@@ -584,9 +625,9 @@ class PatchUnEmbed(nn.Module):
         x = x.transpose(1, 2).view(x.shape[0], self.embed_dim, x_size[0], x_size[1], x_size[2])  # b Ph*Pw*Pd c
         return x
 
-    def flops(self):
-        flops = 0
-        return flops
+    #  def flops(self):
+    #    flops = 0
+    #    return flops
 
 
 # Overlapped image patch embedding with 3x3 Conv
@@ -986,18 +1027,33 @@ class MambaIR(nn.Module):
            resi_connection: The convolutional block before residual connection. '1conv'/'3conv'
        """
 
-    def __init__(self, img_size=64, patch_size=1, in_chans=3, embed_dim=96, depths=(6, 6, 6, 6), drop_rate=0., d_state=16, mlp_ratio=2., drop_path_rate=0.1, norm_layer=nn.LayerNorm, patch_norm=True, use_checkpoint=False, upscale=2, img_range=1., **kwargs):
+    def __init__(
+            self,  # img_size=64, patch_size=1,
+            in_chans=3,
+            embed_dim=96,
+            depths=(6, 6, 6, 6),
+            drop_rate=0.,
+            d_state=16,
+            mlp_ratio=2.,
+            drop_path_rate=0.1,
+            norm_layer=nn.LayerNorm,
+            patch_norm=True,
+            use_checkpoint=False,
+            upscale=2,  # img_range=1.,
+            upsampler='',
+            **kwargs):
         super(MambaIR, self).__init__()
         num_in_ch = in_chans
         num_out_ch = in_chans
         # num_feat = 64
-        self.img_range = img_range
-        if in_chans == 3:
-            rgb_mean = (0.4488, 0.4371, 0.4040)
-            self.mean = torch.Tensor(rgb_mean).view(1, 3, 1, 1)
-        else:
-            self.mean = torch.zeros(1, 1, 1, 1)
+        # self.img_range = img_range
+        # if in_chans == 3:
+        #     rgb_mean = (0.4488, 0.4371, 0.4040)
+        #     self.mean = torch.Tensor(rgb_mean).view(1, 3, 1, 1)
+        # else:
+        #     self.mean = torch.zeros(1, 1, 1, 1)
         self.upscale = upscale
+        self.upsampler = upsampler
         self.mlp_ratio = mlp_ratio
         # ------------------------- 1, shallow feature extraction ------------------------- #
         self.conv_first = nn.Conv3d(num_in_ch, embed_dim, 3, 1, 1)
@@ -1009,13 +1065,15 @@ class MambaIR(nn.Module):
         self.num_features = embed_dim
 
         # transfer 2D feature map into 1D token sequence, pay attention to whether using normalization
-        self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=embed_dim, embed_dim=embed_dim, norm_layer=norm_layer if self.patch_norm else None)
+        self.patch_embed = PatchEmbed(  # img_size=img_size, patch_size=patch_size,
+            in_chans=embed_dim, embed_dim=embed_dim, norm_layer=norm_layer if self.patch_norm else None)
         # num_patches = self.patch_embed.num_patches
-        patches_resolution = self.patch_embed.patches_resolution
-        self.patches_resolution = patches_resolution
+        # patches_resolution = self.patch_embed.patches_resolution
+        # self.patches_resolution = patches_resolution
 
         # return 2D feature map from 1D token sequence
-        self.patch_unembed = PatchUnEmbed(img_size=img_size, patch_size=patch_size, in_chans=embed_dim, embed_dim=embed_dim, norm_layer=norm_layer if self.patch_norm else None)
+        self.patch_unembed = PatchUnEmbed(  # img_size=img_size, patch_size=patch_size,
+            in_chans=embed_dim, embed_dim=embed_dim, norm_layer=norm_layer if self.patch_norm else None)
 
         self.pos_drop = nn.Dropout(p=drop_rate)
         self.is_light_sr = False
@@ -1027,15 +1085,16 @@ class MambaIR(nn.Module):
         for i_layer in range(self.num_layers):  # 6-layer
             layer = ResidualGroup(
                 dim=embed_dim,
-                input_resolution=(patches_resolution[0], patches_resolution[1], patches_resolution[2]),
+                # input_resolution=(patches_resolution[0], patches_resolution[1], patches_resolution[2]),
                 depth=depths[i_layer],
                 d_state=d_state,
                 mlp_ratio=self.mlp_ratio,
                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
                 norm_layer=norm_layer,
                 downsample=None,
-                img_size=img_size,
-                patch_size=patch_size,
+                use_checkpoint=use_checkpoint,
+                # img_size=img_size,
+                # patch_size=patch_size,
                 is_light_sr=self.is_light_sr)
             self.layers.append(layer)
         self.norm = norm_layer(self.num_features)
@@ -1045,7 +1104,10 @@ class MambaIR(nn.Module):
         # -------------------------3. high-quality image reconstruction ------------------------ #
 
         # for lightweight SR (to save parameters)
-        self.upsample = UpsampleOneStep(upscale, embed_dim, num_out_ch)
+        if self.upsampler == 'pixelshuffledirect':
+            self.upsample = UpsampleOneStep(upscale, embed_dim, num_out_ch)
+        else:
+            self.conv_last = nn.Conv3d(embed_dim, embed_dim, 3, 1, 1)
 
         self.apply(self._init_weights)
 
@@ -1073,42 +1135,49 @@ class MambaIR(nn.Module):
         x = self.pos_drop(x)
 
         for i, layer in enumerate(self.layers):
-            print(f'before layer: x size: {x_size}, x shape: {x.shape}')
+            # print(f'before layer: x size: {x_size}, x shape: {x.shape}')
             x = layer(x, x_size)
-            print(f'after layer: x size: {x_size}, x shape: {x.shape}')
+            # print(f'after layer: x size: {x_size}, x shape: {x.shape}')
 
         x = self.norm(x)  # b seq_len c
         x = self.patch_unembed(x, x_size)
-        print(f'after unembed: x size: {x_size}, x shape: {x.shape}')
+        # print(f'after unembed: x size: {x_size}, x shape: {x.shape}')
 
         return x
 
     def forward(self, x):
-        self.mean = self.mean.type_as(x)
-        x = (x - self.mean) * self.img_range
+        # self.mean = self.mean.type_as(x)
+        # x = (x - self.mean) * self.img_range
         # for lightweight SR
-        print(f'before conv_first: x size: {x.shape}')
-        x = self.conv_first(x)
-        print(f'after conv_first: x size: {x.shape}')
-        x_after_body = self.forward_features(x)
-        x_after_body = self.conv_after_body(x_after_body)
-        x = x_after_body + x
-        print(f'after conv_after_body: x size: {x.shape}')
-        x = self.upsample(x)
-        x = x / self.img_range + self.mean
+        if self.upsampler == 'pixelshuffledirect':
+            # print(f'before conv_first: x size: {x.shape}')
+            x = self.conv_first(x)
+            # print(f'after conv_first: x size: {x.shape}')
+            x_after_body = self.forward_features(x)
+            x_after_body = self.conv_after_body(x_after_body)
+            x = x_after_body + x
+            # print(f'after conv_after_body: x size: {x.shape}')
+        else:
+            x_first = self.conv_first(x)
+            res = self.conv_after_body(self.forward_features(x_first)) + x_first
+            res = self.conv_last(res)
+            x = x + res
+        # remove for asr
+        # x = self.upsample(x)
+        # x = x / self.img_range + self.mean
 
         return x
 
-    def flops(self):
-        flops = 0
-        h, w = self.patches_resolution
-        flops += h * w * 3 * self.embed_dim * 9
-        flops += self.patch_embed.flops()
-        for layer in self.layers:
-            flops += layer.flops()
-        flops += h * w * 3 * self.embed_dim * self.embed_dim
-        flops += self.upsample.flops()
-        return flops
+    # def flops(self):
+    #    flops = 0
+    #    h, w = self.patches_resolution
+    #    flops += h * w * 3 * self.embed_dim * 9
+    #    flops += self.patch_embed.flops()
+    #    for layer in self.layers:
+    #        flops += layer.flops()
+    #    flops += h * w * 3 * self.embed_dim * self.embed_dim
+    #    flops += self.upsample.flops()
+    #    return flops
 
 
 class UpsampleOneStep(nn.Sequential):
@@ -1251,16 +1320,28 @@ if __name__ == '__main__':
     # out = encoder(test_input) #
     # print("encoder our shape test: ", out.shape) #
 
-    # encoder = MambaIR(img_size=32., patch_size=1, in_chans=1, embed_dim=16, depths=(6, 6, 6, 6), drop_rate=0., d_state = 16, mlp_ratio=1., drop_path_rate=0.1, norm_layer=nn.LayerNorm, patch_norm=True, use_checkpoint=False, upscale=2, img_range=1.,)
-    encoder = MambaIREncoder(
-        inp_channels=1,
-        out_channels=1,
-        dim=4,
-        num_blocks=[4, 4, 4, 4],
-        num_refinement_blocks=4,
+    encoder = MambaIR(  # img_size=32., patch_size=1,
+        in_chans=1,
+        embed_dim=16,
+        depths=(6, 6, 6, 6),
+        drop_rate=0.,
+        d_state=16,
         mlp_ratio=1.,
-        bias=False,
-    )
+        drop_path_rate=0.1,
+        norm_layer=nn.LayerNorm,
+        patch_norm=True,
+        use_checkpoint=False,
+        upscale=None,
+    )  # img_range=1.,)
+    # encoder = MambaIREncoder(
+    #    inp_channels=1,
+    #    out_channels=1,
+    #    dim=4,
+    #    num_blocks=[4, 4, 4, 4],
+    #    num_refinement_blocks=4,
+    #    mlp_ratio=1.,
+    #    bias=False,
+    # )
     test_input = torch.rand(2, 1, 64, 64, 64)
     out = encoder(test_input)
-    print('encoder out shape test: ', out.shape)
+    # print('encoder out shape test: ', out.shape)
