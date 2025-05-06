@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from collections import OrderedDict
 from os import path as osp
+from SR21cm.utils import calculate_power_spectrum
 from tqdm import tqdm
 
 from ASR21cm.archs.arch_utils import make_coord
@@ -136,45 +137,66 @@ class ASR21cmModel(SRModel):
             torch.cuda.empty_cache()
 
             if save_img:
-                b, c, h, w, d = visuals['sr'].shape
-                visuals['sr'] = visuals['sr'] * visuals['std'] + visuals['mean']
-                visuals['hr'] = visuals['hr'] * visuals['std'] + visuals['mean']
-                rmse = ((visuals['sr'] - visuals['hr'])**2).mean(dim=[1, 2, 3, 4]).sqrt()
-                rmse = rmse.cpu().numpy()
-                slice_idx = d // 2
-                fig, axes = plt.subplots(3, b, figsize=(b * 5, 3 * 5))
-                if b == 1:
-                    axes = np.expand_dims(axes, axis=0)
-                    axes = axes.reshape(3, b)
-                for i in range(b):
-                    vmin = min(visuals['sr'][i, :, :, slice_idx].min(), visuals['hr'][i, :, :, slice_idx].min())
-                    vmax = max(visuals['sr'][i, :, :, slice_idx].max(), visuals['hr'][i, :, :, slice_idx].max())
-                    axes[0, i].imshow(visuals['hr'][i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
-                    axes[0, i].set_title('HR')
-                    axes[1, i].imshow(visuals['sr'][i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
-                    axes[1, i].set_title('SR')
+                with torch.no_grad():
+                    b, c, h, w, d = visuals['sr'].shape
+                    visuals['sr'] = visuals['sr'] * visuals['std'] + visuals['mean']
+                    visuals['hr'] = visuals['hr'] * visuals['std'] + visuals['mean']
+                    rmse = ((visuals['sr'] - visuals['hr'])**2).mean(dim=[1, 2, 3, 4]).sqrt()
+                    rmse = rmse.cpu().numpy()
+                    k_hr, dsq_hr = calculate_power_spectrum(data_x=visuals['hr'], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
+                    k_sr, dsq_sr = calculate_power_spectrum(data_x=visuals['sr'], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
 
-                    xmin = min(visuals['sr'][i].min(), visuals['hr'][i].min())
-                    xmax = max(visuals['sr'][i].max(), visuals['hr'][i].max())
-                    bins = np.linspace(xmin, xmax, 100)
-                    axes[2, i].hist(visuals['hr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', density=True)
-                    axes[2, i].hist(visuals['sr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', density=True)
-                    axes[2, i].legend(title='RMSE: {:.2f}'.format(rmse[i]))
-                save_img_path = osp.join(self.opt['path']['visualization'], f'{current_iter}.png')
-                plt.savefig(save_img_path, bbox_inches='tight')
-                plt.close(fig)
+                    nrows = 4
+                    fig, axes = plt.subplots(nrows, b, figsize=(b * 5, nrows * 5))
+                    if b == 1:
+                        axes = np.expand_dims(axes, axis=0)
+                        axes = axes.reshape(nrows, b)
 
-                # if self.opt['is_train']:
-                #    save_img_path = osp.join(self.opt['path']['visualization'], img_name,
-                #                             f'{img_name}_{current_iter}.png')
-                # else:
-                #    if self.opt['val']['suffix']:
-                #        save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
-                #                                 f'{img_name}_{self.opt["val"]["suffix"]}.png')
-                #    else:
-                #        save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
-                #                                 f'{img_name}_{self.opt["name"]}.png')
-                # imwrite(sr_img, save_img_path)
+                    slice_idx = d // 2
+                    for i in range(b):
+                        vmin = min(visuals['sr'][i, :, :, slice_idx].min(), visuals['hr'][i, :, :, slice_idx].min())
+                        vmax = max(visuals['sr'][i, :, :, slice_idx].max(), visuals['hr'][i, :, :, slice_idx].max())
+
+                        axes[0, i].imshow(visuals['hr'][i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
+                        axes[0, i].set_title('HR')
+
+                        axes[1, i].imshow(visuals['sr'][i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
+                        axes[1, i].set_title('SR')
+
+                        xmin = min(visuals['sr'][i].min(), visuals['hr'][i].min())
+                        xmax = max(visuals['sr'][i].max(), visuals['hr'][i].max())
+                        bins = np.linspace(xmin, xmax, 100)
+                        axes[2, i].hist(visuals['hr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', density=True)
+                        axes[2, i].hist(visuals['sr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', density=True)
+                        axes[2, i].legend(title='RMSE: {:.2f}'.format(rmse[i]))
+                        axes[2, i].set_xlabel(r'$T_{{21}}$ [${\rm mK}$]')
+
+                        axes[3, i].loglog(k_hr, dsq_hr[i, 0], label='$T_{{21}}$ HR', ls='solid', lw=2)
+                        axes[3, i].loglog(k_sr, dsq_sr[i, 0], label='$T_{{21}}$ SR', ls='solid', lw=2)
+                        axes[3, i].legend()
+                        axes[3, i].set_xlabel('$k\\ [\\mathrm{{cMpc^{-1}}}]$')
+                        axes[3, i].legend()
+
+                    axes[0, 0].set_ylabel('HR')
+                    axes[1, 0].set_ylabel('SR')
+                    axes[2, 0].set_ylabel('PDF')
+                    axes[3, 0].set_ylabel('$\\Delta^2_{{21}}\\ \\mathrm{{[mK^2]}}$ ')
+
+                    save_img_path = osp.join(self.opt['path']['visualization'], f'{current_iter}.png')
+                    plt.savefig(save_img_path, bbox_inches='tight')
+                    plt.close(fig)
+
+                    # if self.opt['is_train']:
+                    #    save_img_path = osp.join(self.opt['path']['visualization'], img_name,
+                    #                             f'{img_name}_{current_iter}.png')
+                    # else:
+                    #    if self.opt['val']['suffix']:
+                    #        save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
+                    #                                 f'{img_name}_{self.opt["val"]["suffix"]}.png')
+                    #    else:
+                    #        save_img_path = osp.join(self.opt['path']['visualization'], dataset_name,
+                    #                                 f'{img_name}_{self.opt["name"]}.png')
+                    # imwrite(sr_img, save_img_path)
 
             if with_metrics:
                 # calculate metrics

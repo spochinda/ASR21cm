@@ -19,7 +19,7 @@ datasets:
     scale_max: 4.5
     scale_min: 1.1
     n_augment: 1
-    one_box: true
+    one_box: false
     io_backend:
       type: disk
 
