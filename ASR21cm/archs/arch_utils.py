@@ -7,7 +7,7 @@ import warnings
 from einops import rearrange, repeat
 from functools import partial
 # from pdb import set_trace as stx
-from timm.models.layers import DropPath  # , trunc_normal_
+from timm.layers import DropPath  # , trunc_normal_
 from typing import Callable
 
 try:
@@ -422,7 +422,7 @@ class BasicLayer(nn.Module):
     def forward(self, x, x_size):
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
-                x = torch.utils.checkpoint.checkpoint(blk, x, x_size)
+                x = torch.utils.checkpoint.checkpoint(blk, x, x_size, use_reentrant=False)
             else:
                 x = blk(x, x_size)
         if self.downsample is not None:

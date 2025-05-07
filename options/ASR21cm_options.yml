@@ -1,17 +1,18 @@
 # general settings
 name: asr
 model_type: ASR21cmModel
-scale: 4
-num_gpu: 0  # set num_gpu: 0 for cpu mode
+# scale: 4
+num_gpu: auto  # set num_gpu: 0 for cpu mode
 manual_seed: 0
+use_amp: true
 
 # dataset and data loader settings
 datasets:
   train:
     name: T21train
     type: Custom21cmDataset
-    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes/
-    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes/
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/T21_cubes/
+    dataroot_IC: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/IC_cubes/
     redshifts: [10,]
     IC_seeds: [0,]
     Npix: 256
@@ -19,7 +20,7 @@ datasets:
     scale_max: 4.5
     scale_min: 1.1
     n_augment: 1
-    one_box: false
+    one_box: true
     io_backend:
       type: disk
 
@@ -30,20 +31,19 @@ datasets:
     dataset_enlarge_ratio: 10
     prefetch_mode: ~
 
-
   val:
     name: T21val
     type: Custom21cmDataset
-    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes
-    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/T21_cubes
+    dataroot_IC: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/IC_cubes
     redshifts: [10,]
     IC_seeds: [2, 3]
     Npix: 256
-    cut_factor: 1
+    cut_factor: 0
     scale_max: 4.5
     scale_min: 1.1
     n_augment: 1
-    one_box: true
+    one_box: false
     io_backend:
       type: disk
 
@@ -51,10 +51,10 @@ datasets:
 network_g:
   # hr_size: 128 # Npix / 2**cut_factor
   type: ArSSR
-  dim: 2 #  8
-  decoder_depth: 2 # 4
-  decoder_width: 2 # 8
-  use_checkpoint: false
+  dim: 4 #  8
+  decoder_depth: 4 # 4
+  decoder_width: 8 # 8
+  use_checkpoint: true
 
 # path
 path:

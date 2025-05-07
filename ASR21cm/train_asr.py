@@ -7,23 +7,13 @@ from os import path as osp
 
 from ASR21cm.data import build_dataloader
 from ASR21cm.data.ASR21cm_dataset import create_collate_fn
+from basicsr import init_tb_loggers, load_resume_state
 from basicsr.data import build_dataset
 from basicsr.data.data_sampler import EnlargedSampler
 from basicsr.data.prefetch_dataloader import CPUPrefetcher, CUDAPrefetcher
 from basicsr.models import build_model
-from basicsr.utils import AvgTimer, MessageLogger, check_resume, get_env_info, get_root_logger, get_time_str, init_tb_logger, init_wandb_logger, make_exp_dirs, mkdir_and_rename, scandir
+from basicsr.utils import AvgTimer, MessageLogger, get_env_info, get_root_logger, get_time_str, make_exp_dirs, mkdir_and_rename
 from basicsr.utils.options import copy_opt_file, dict2str, parse_options
-
-
-def init_tb_loggers(opt):
-    # initialize wandb logger before tensorboard logger to allow proper sync
-    if (opt['logger'].get('wandb') is not None) and (opt['logger']['wandb'].get('project') is not None) and ('debug' not in opt['name']):
-        assert opt['logger'].get('use_tb_logger') is True, ('should turn on tensorboard when using wandb')
-        init_wandb_logger(opt)
-    tb_logger = None
-    if opt['logger'].get('use_tb_logger') and 'debug' not in opt['name']:
-        tb_logger = init_tb_logger(log_dir=osp.join(opt['root_path'], 'tb_logger', opt['name']))
-    return tb_logger
 
 
 def create_train_val_dataloader(opt, logger):
@@ -57,29 +47,6 @@ def create_train_val_dataloader(opt, logger):
             raise ValueError(f'Dataset phase {phase} is not recognized.')
 
     return train_loader, train_sampler, val_loaders, total_epochs, total_iters
-
-
-def load_resume_state(opt):
-    resume_state_path = None
-    if opt['auto_resume']:
-        state_path = osp.join('experiments', opt['name'], 'training_states')
-        if osp.isdir(state_path):
-            states = list(scandir(state_path, suffix='state', recursive=False, full_path=False))
-            if len(states) != 0:
-                states = [float(v.split('.state')[0]) for v in states]
-                resume_state_path = osp.join(state_path, f'{max(states):.0f}.state')
-                opt['path']['resume_state'] = resume_state_path
-    else:
-        if opt['path'].get('resume_state'):
-            resume_state_path = opt['path']['resume_state']
-
-    if resume_state_path is None:
-        resume_state = None
-    else:
-        device_id = torch.cuda.current_device()
-        resume_state = torch.load(resume_state_path, map_location=lambda storage, loc: storage.cuda(device_id))
-        check_resume(opt, resume_state['iter'])
-    return resume_state
 
 
 def train_pipeline(root_path):
@@ -160,6 +127,8 @@ def train_pipeline(root_path):
             model.update_learning_rate(current_iter, warmup_iter=opt['train'].get('warmup_iter', -1))
             # training
             model.feed_data(train_data)
+            # with torch.autograd.profiler.emit_nvtx():
+            # if current_iter == 1:
             model.optimize_parameters(current_iter)
             iter_timer.record()
             if current_iter == 1:

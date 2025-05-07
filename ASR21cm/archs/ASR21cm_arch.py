@@ -46,8 +46,10 @@ class ArSSR(nn.Module):
             {h,w,d}: dimensional size of LR input image
         """
         # extract feature map from LR image
-        # feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr)  #
-        feature_map = self.encoder(img_lr)
+        if self.use_checkpoint:
+            feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
+        else:
+            feature_map = self.encoder(img_lr)
 
         # generate feature vector for coordinate through trilinear interpolation (Equ. 4 & Fig. 3).
         coords = xyz_hr.flip(-1)

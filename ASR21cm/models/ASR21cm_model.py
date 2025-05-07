@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+import time
 import torch
 from collections import OrderedDict
 from os import path as osp
@@ -12,6 +14,7 @@ from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
 from basicsr.models.sr_model import SRModel
 from basicsr.utils import get_root_logger
+from basicsr.utils.dist_util import master_only
 from basicsr.utils.registry import MODEL_REGISTRY
 
 
@@ -64,6 +67,11 @@ class ASR21cmModel(SRModel):
         self.setup_optimizers()
         self.setup_schedulers()
 
+        if self.opt.get('use_amp', False):
+            self.scaler = torch.amp.GradScaler(enabled=True)
+        else:
+            self.scaler = None
+
     def feed_data(self, data):
         # {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
         self.lq = data['lq'].to(self.device)
@@ -73,6 +81,7 @@ class ASR21cmModel(SRModel):
         # self.labels = data['labels'].to(self.device)
         self.T21_lr_mean = data['T21_lr_mean'].to(self.device)
         self.T21_lr_std = data['T21_lr_std'].to(self.device)
+        self.scale_factor = data['scale_factor']
         # self.scale_factor = data['scale_factor']
 
     def optimize_parameters(self, current_iter):
@@ -82,17 +91,23 @@ class ASR21cmModel(SRModel):
         xyz_hr = xyz_hr.repeat(b, 1, 1)
 
         self.optimizer_g.zero_grad()
-        self.output = self.net_g(self.lq, xyz_hr)
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.scaler is not None):
+            self.output = self.net_g(self.lq, xyz_hr)
 
-        l_total = 0
-        loss_dict = OrderedDict()
-        # l1 loss
-        l_l1 = self.l1_pix(self.output, self.gt)
-        l_total += l_l1
+            l_total = 0
+            loss_dict = OrderedDict()
+            # l1 loss
+            l_l1 = self.l1_pix(self.output, self.gt)
+            l_total += l_l1
         loss_dict['l_l1'] = l_l1
 
-        l_total.backward()
-        self.optimizer_g.step()
+        if self.scaler is not None:
+            self.scaler.scale(l_total).backward()
+            self.scaler.step(self.optimizer_g)
+            self.scaler.update()
+        else:
+            l_total.backward()
+            self.optimizer_g.step()
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
 
@@ -168,7 +183,7 @@ class ASR21cmModel(SRModel):
                         bins = np.linspace(xmin, xmax, 100)
                         axes[2, i].hist(visuals['hr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', density=True)
                         axes[2, i].hist(visuals['sr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', density=True)
-                        axes[2, i].legend(title='RMSE: {:.2f}'.format(rmse[i]))
+                        axes[2, i].legend(title=f'RMSE: {rmse[i]:.2f}, scale: {self.scale_factor:.2f}')
                         axes[2, i].set_xlabel(r'$T_{{21}}$ [${\rm mK}$]')
 
                         axes[3, i].loglog(k_hr, dsq_hr[i, 0], label='$T_{{21}}$ HR', ls='solid', lw=2)
@@ -240,3 +255,57 @@ class ASR21cmModel(SRModel):
         out_dict['mean'] = self.T21_lr_mean.detach().cpu()
         out_dict['std'] = self.T21_lr_std.detach().cpu()
         return out_dict
+
+    @master_only
+    def save_training_state(self, epoch, current_iter):
+        """Save training states during training, which will be used for
+        resuming.
+
+        Args:
+            epoch (int): Current epoch.
+            current_iter (int): Current iteration.
+        """
+        if current_iter != -1:
+            state = {'epoch': epoch, 'iter': current_iter, 'optimizers': [], 'schedulers': []}
+            for o in self.optimizers:
+                state['optimizers'].append(o.state_dict())
+            for s in self.schedulers:
+                state['schedulers'].append(s.state_dict())
+            if self.scaler is not None:
+                state['scaler'] = self.scaler.state_dict()
+            save_filename = f'{current_iter}.state'
+            save_path = os.path.join(self.opt['path']['training_states'], save_filename)
+
+            # avoid occasional writing errors
+            retry = 3
+            while retry > 0:
+                try:
+                    torch.save(state, save_path)
+                except Exception as e:
+                    logger = get_root_logger()
+                    logger.warning(f'Save training state error: {e}, remaining retry times: {retry - 1}')
+                    time.sleep(1)
+                else:
+                    break
+                finally:
+                    retry -= 1
+            if retry == 0:
+                logger.warning(f'Still cannot save {save_path}. Just ignore it.')
+                # raise IOError(f'Cannot save {save_path}.')
+
+    def resume_training(self, resume_state):
+        """Reload the optimizers and schedulers for resumed training.
+
+        Args:
+            resume_state (dict): Resume state.
+        """
+        resume_optimizers = resume_state['optimizers']
+        resume_schedulers = resume_state['schedulers']
+        assert len(resume_optimizers) == len(self.optimizers), 'Wrong lengths of optimizers'
+        assert len(resume_schedulers) == len(self.schedulers), 'Wrong lengths of schedulers'
+        for i, o in enumerate(resume_optimizers):
+            self.optimizers[i].load_state_dict(o)
+        for i, s in enumerate(resume_schedulers):
+            self.schedulers[i].load_state_dict(s)
+        if self.scaler is not None:
+            self.scaler.load_state_dict(resume_state['scaler'])

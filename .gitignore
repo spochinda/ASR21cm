@@ -10,6 +10,7 @@ tmp/*
 slurm*
 *.err
 *.out
+report*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

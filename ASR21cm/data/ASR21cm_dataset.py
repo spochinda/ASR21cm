@@ -147,10 +147,14 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box):
     labels = labels.view(b * expansion_factor, label_dim)
 
     b, c, h, w, d = T21.shape
-    scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
-    while (round(h / scale_factor) / 4) % 2 != 0:  # hardcoded 4 because of the 4x downsampling
-        scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
-    h_lr = round(h / scale_factor)
+    size_min = h // scale_max
+    size_max = h // scale_min
+    h_lr = np.random.randint(size_min, size_max + 1, size=1)[0]
+    scale_factor = h / h_lr
+    # scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
+    # while (round(h / scale_factor) / 4) % 2 != 0:  # hardcoded 4 because of the 4x downsampling
+    #     scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
+    # h_lr = round(h / scale_factor)
     T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
     T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
     T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
