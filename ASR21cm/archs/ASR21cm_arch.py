@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 
-from ASR21cm.archs.arch_utils import MambaIR, MLP_decoder, make_coord  # , MambaIREncoder
+from ASR21cm.archs.arch_utils import RDN, MLP_decoder, make_coord  # MambaIR, MambaIREncoder
 from basicsr.utils.registry import ARCH_REGISTRY
 
 
@@ -32,9 +32,10 @@ class ArSSR(nn.Module):
         #     mlp_ratio=1.,
         #     bias=False,
         #     )
-        self.encoder = MambaIR(in_chans=1, embed_dim=self.feature_dim, depths=(6, 6, 6, 6), drop_rate=0., d_state=16, mlp_ratio=1., drop_path_rate=0.1, norm_layer=nn.LayerNorm, patch_norm=True, use_checkpoint=self.use_checkpoint, upscale=None)
+        # self.encoder = MambaIR(in_chans=1, embed_dim=self.feature_dim, depths=(6, 6, 6, 6), drop_rate=0., d_state=16, mlp_ratio=1., drop_path_rate=0.1, norm_layer=nn.LayerNorm, patch_norm=True, use_checkpoint=self.use_checkpoint, upscale=None, **kwargs)
+        self.encoder = RDN(feature_dim=self.feature_dim, num_features=64, growth_rate=64, num_blocks=8, num_layers=3)
 
-        self.decoder = MLP_decoder(in_dim=self.feature_dim + 3, out_dim=1, depth=decoder_depth, width=decoder_width)
+        self.decoder = MLP_decoder(in_dim=self.feature_dim + 3, out_dim=1, depth=decoder_depth, width=decoder_width, **kwargs)
 
     def forward(self, img_lr, xyz_hr):
         """
