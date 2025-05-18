@@ -1265,19 +1265,23 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
 
 class MLP_decoder(nn.Module):
 
-    def __init__(self, in_dim=128 + 3, out_dim=1, depth=4, width=256, activation='LeakyReLU', **kwargs):
+    def __init__(self, latent_dim=128, out_dim=1, depth=4, width=256, activation='LeakyReLU', **kwargs):
         super(MLP_decoder, self).__init__()
+        self.use_checkpoint = kwargs.get('use_checkpoint', False)
+        self.chunk = kwargs.get('chunk', False)
+        latent_dim = latent_dim + 3  # +3 for coordinates
+
         stage_one = []
         stage_two = []
         activation = getattr(nn, activation)
         for i in range(depth):
             if i == 0:
-                stage_one.append(nn.Linear(in_dim, width))
-                stage_two.append(nn.Linear(in_dim, width))
+                stage_one.append(nn.Linear(latent_dim, width))
+                stage_two.append(nn.Linear(latent_dim, width))
                 stage_one.append(activation())
                 stage_two.append(activation())
             elif i == depth - 1:
-                stage_one.append(nn.Linear(width, in_dim))
+                stage_one.append(nn.Linear(width, latent_dim))
                 stage_two.append(nn.Linear(width, out_dim))
             else:
                 stage_one.append(nn.Linear(width, width))
@@ -1289,8 +1293,15 @@ class MLP_decoder(nn.Module):
         self.stage_two = nn.Sequential(*stage_two)
 
     def forward(self, x):
-        h = self.stage_one(x)
-        return self.stage_two(x + h)
+        if self.chunk:
+            x_chunks = x.chunk(8, dim=0)
+            h_chunks = [torch.utils.checkpoint.checkpoint(self.stage_one, x_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_one(x_chunk) for x_chunk in x_chunks]
+            output_chunks = [torch.utils.checkpoint.checkpoint(self.stage_two, x_chunk + h_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_two(x_chunk + h_chunk) for x_chunk, h_chunk in zip(x_chunks, h_chunks)]
+            output = torch.cat(output_chunks, dim=0)
+        else:
+            h = torch.utils.checkpoint.checkpoint(self.stage_one, x, use_reentrant=False) if self.use_checkpoint else self.stage_one(x)
+            output = torch.utils.checkpoint.checkpoint(self.stage_two, x + h, use_reentrant=False) if self.use_checkpoint else self.stage_two(x + h)
+        return output
 
 
 @torch.no_grad()
@@ -1320,6 +1331,7 @@ def make_coord(shape, ranges=None, flatten=True):
 # <Zhang, Yulun, et al. "Residual dense network for image super-resolution.">
 # Here code is modified from: https://github.com/yjn870/RDN-pytorch/blob/master/models.py
 # -------------------------------
+"""
 class DenseLayer(nn.Module):
 
     def __init__(self, in_channels, out_channels):
@@ -1337,16 +1349,96 @@ class RDB(nn.Module):
         super(RDB, self).__init__()
         self.layers = nn.Sequential(*[DenseLayer(in_channels + growth_rate * i, growth_rate) for i in range(num_layers)])
         # local feature fusion
-        self.lff = nn.Conv3d(in_channels + growth_rate * num_layers, growth_rate, kernel_size=1)
+        self.lff = nn.Conv3d(in_channels + growth_rate * num_layers, in_channels, kernel_size=1)
 
     def forward(self, x):
-        return x + self.lff(self.layers(x))  # local residual learning
+        lff = self.lff(self.layers(x))
+        x = x + lff
+        return x
 
 
 class RDN(nn.Module):
 
-    def __init__(self, feature_dim=128, num_features=64, growth_rate=64, num_blocks=8, num_layers=3):
+    def __init__(self, latent_dim=128, num_features=64, growth_rate=64, num_blocks=8, num_layers=3, **kwargs):
         super(RDN, self).__init__()
+        self.use_checkpoint = kwargs.get('use_checkpoint', False)
+
+        self.G0 = num_features
+        self.G = growth_rate
+        self.D = num_blocks
+        self.C = num_layers
+        # shallow feature extraction
+        self.sfe1 = nn.Conv3d(1, num_features, kernel_size=3, padding=3 // 2)
+        self.sfe2 = nn.Conv3d(num_features, num_features, kernel_size=3, padding=3 // 2)
+        # residual dense blocks
+        self.rdbs = nn.ModuleList([RDB(self.G0, self.G, self.C)])
+        for _ in range(self.D - 1):
+            self.rdbs.append(RDB(self.G0, self.G, self.C))
+        # global feature fusion
+        self.gff = nn.Sequential(nn.Conv3d(32, 32, kernel_size=1), nn.Conv3d(32, 8, kernel_size=3, padding=3 // 2))
+        self.output = nn.Conv3d(8, latent_dim, kernel_size=3, padding=3 // 2)
+
+    def forward(self, x):
+        sfe1 = self.sfe1(x)
+        sfe2 = self.sfe2(sfe1)
+        x = sfe2
+        local_features = []
+        for i in range(self.D):
+            if self.use_checkpoint:
+                x = torch.utils.checkpoint.checkpoint(self.rdbs[i], x, use_reentrant=False)
+            else:
+                x = self.rdbs[i](x)
+            local_features.append(x)
+        gff = torch.cat(local_features, 1)
+        gff = self.gff(gff)
+        x = gff + sfe1  # global residual learning
+        x = self.output(x)
+        return x
+"""
+
+
+class DenseLayer(nn.Module):
+
+    def __init__(self, in_channels, out_channels):
+        super(DenseLayer, self).__init__()
+        self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=3 // 2)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        x_first = x
+        # print(f"x_first shape in DenseLayer: {x_first.shape}")
+        x = self.conv(x)
+        # print(f"x shape after conv in DenseLayer: {x.shape}")
+        x = self.relu(x)
+        # print(f"x shape after relu in DenseLayer: {x.shape}")
+        x = torch.cat([x_first, x], 1)
+        # print(f"x shape after cat in DenseLayer: {x.shape}")
+        return x
+
+
+class RDB(nn.Module):
+
+    def __init__(self, in_channels, growth_rate, num_layers):
+        super(RDB, self).__init__()
+        self.layers = nn.Sequential(*[DenseLayer(in_channels + growth_rate * i, growth_rate) for i in range(num_layers)])
+        # local feature fusion
+        self.lff = nn.Conv3d(in_channels + growth_rate * num_layers, growth_rate, kernel_size=1)
+
+    def forward(self, x):
+        # print(f"lff in channels : {self.lff.in_channels}, out channels : {self.lff.out_channels}")
+        lff = self.layers(x)
+        # print(f"lff shape in RDB after layers: {lff.shape}")
+        lff = self.lff(lff)
+        # print(f"lff shape in RDB: after lff: {lff.shape}")
+        return x + lff  # local residual learning
+
+
+class RDN(nn.Module):
+
+    def __init__(self, latent_dim=16, num_features=16, growth_rate=16, num_blocks=8, num_layers=3, **kwargs):
+        super(RDN, self).__init__()
+        self.use_checkpoint = kwargs.get('use_checkpoint', False)
+
         self.G0 = num_features
         self.G = growth_rate
         self.D = num_blocks
@@ -1360,18 +1452,29 @@ class RDN(nn.Module):
             self.rdbs.append(RDB(self.G, self.G, self.C))
         # global feature fusion
         self.gff = nn.Sequential(nn.Conv3d(self.G * self.D, self.G0, kernel_size=1), nn.Conv3d(self.G0, self.G0, kernel_size=3, padding=3 // 2))
-        self.output = nn.Conv3d(self.G0, feature_dim, kernel_size=3, padding=3 // 2)
+        self.output = nn.Conv3d(self.G0, latent_dim, kernel_size=3, padding=3 // 2)
 
     def forward(self, x):
+        # print(f"1: shape: {x.shape}")
         sfe1 = self.sfe1(x)
+        # print(f"2: shape: {sfe1.shape}")
         sfe2 = self.sfe2(sfe1)
+        # print(f"3: shape: {sfe2.shape}")
         x = sfe2
+        # print(f"4: shape: {x.shape}")
         local_features = []
         for i in range(self.D):
             x = self.rdbs[i](x)
+            # print(f"5.{i}: shape: {x.shape}")
             local_features.append(x)
-        x = self.gff(torch.cat(local_features, 1)) + sfe1  # global residual learning
+        gff = torch.cat(local_features, 1)
+        # print(f"6: shape: {gff.shape}")
+        gff = self.gff(gff)
+        # print(f"7: shape: {gff.shape}")
+        x = gff + sfe1  # global residual learning
+        # print(f"8: shape: {x.shape}")
         x = self.output(x)
+        # print(f"9: shape: {x.shape}")
         return x
 
 

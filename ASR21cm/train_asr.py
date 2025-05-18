@@ -23,8 +23,9 @@ def create_train_val_dataloader(opt, logger):
         if phase == 'train':
             dataset_enlarge_ratio = dataset_opt.get('dataset_enlarge_ratio', 1)
             train_set = build_dataset(dataset_opt)
+            train_set.phase = 'train'
             train_sampler = EnlargedSampler(train_set, opt['world_size'], opt['rank'], dataset_enlarge_ratio)
-            collate_fn = create_collate_fn(dataset_opt)
+            collate_fn = create_collate_fn(dataset_opt, phase=phase)
             train_loader = build_dataloader(train_set, dataset_opt, collate_fn, num_gpu=opt['num_gpu'], dist=opt['dist'], sampler=train_sampler, seed=opt['manual_seed'])
 
             num_iter_per_epoch = math.ceil(len(train_set) * dataset_enlarge_ratio / (dataset_opt['batch_size_per_gpu'] * opt['world_size']))
@@ -39,7 +40,8 @@ def create_train_val_dataloader(opt, logger):
                         f'\n\tTotal epochs: {total_epochs}; iters: {total_iters}.')
         elif phase.split('_')[0] == 'val':
             val_set = build_dataset(dataset_opt)
-            collate_fn = create_collate_fn(dataset_opt)
+            val_set.phase = phase
+            collate_fn = create_collate_fn(dataset_opt, phase=phase)
             val_loader = build_dataloader(val_set, dataset_opt, collate_fn, num_gpu=opt['num_gpu'], dist=opt['dist'], sampler=None, seed=opt['manual_seed'])
             logger.info(f'Number of val images/folders in {dataset_opt["name"]}: {len(val_set)}')
             val_loaders.append(val_loader)
@@ -116,7 +118,7 @@ def train_pipeline(root_path):
         train_sampler.set_epoch(epoch)
         prefetcher.reset()
         train_data = prefetcher.next()
-
+        torch.cuda.memory._record_memory_history() if torch.cuda.is_available() and opt.get('memory_profiling', False) else None
         while train_data is not None:
             data_timer.record()
 
@@ -127,8 +129,6 @@ def train_pipeline(root_path):
             model.update_learning_rate(current_iter, warmup_iter=opt['train'].get('warmup_iter', -1))
             # training
             model.feed_data(train_data)
-            # with torch.autograd.profiler.emit_nvtx():
-            # if current_iter == 1:
             model.optimize_parameters(current_iter)
             iter_timer.record()
             if current_iter == 1:
@@ -171,6 +171,7 @@ def train_pipeline(root_path):
             model.validation(val_loader, current_iter, tb_logger, opt['val']['save_img'])
     if tb_logger:
         tb_logger.close()
+    torch.cuda.memory._dump_snapshot(filename=osp.join(opt['path']['experiments_root'], f'{current_iter}_memory_snapshot.pickle')) if torch.cuda.is_available() and opt.get('memory_profiling', False) else None
 
 
 if __name__ == '__main__':

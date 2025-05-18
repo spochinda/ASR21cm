@@ -44,9 +44,9 @@ class ASR21cmModel(SRModel):
         self.net_g.train()
         train_opt = self.opt['train']
 
+        logger = get_root_logger()
         self.ema_decay = train_opt.get('ema_decay', 0)
         if self.ema_decay > 0:
-            logger = get_root_logger()
             logger.info(f'Use Exponential Moving Average with decay: {self.ema_decay}')
             # define network net_g with Exponential Moving Average (EMA)
             # net_g_ema is used only for testing on one GPU and saving
@@ -61,30 +61,51 @@ class ASR21cmModel(SRModel):
             self.net_g_ema.eval()
 
         # define losses
-        self.l1_pix = build_loss(train_opt['l1_opt']).to(self.device)
+        self.l1_loss = build_loss(train_opt['l1_opt']).to(self.device)
+        if train_opt.get('dsq_opt'):
+            self.dsq_loss = build_loss(train_opt['dsq_opt']).to(self.device)
+        else:
+            self.dsq_loss = None
 
         # set up optimizers and schedulers
         self.setup_optimizers()
         self.setup_schedulers()
 
-        if self.opt.get('use_amp', False):
+        # use automatic mixed precision (AMP) for training
+        self.use_amp = self.opt.get('use_amp', False)
+        if self.use_amp:
             self.scaler = torch.amp.GradScaler(enabled=True)
         else:
             self.scaler = None
 
+        # test that model can run 512x512x512 data with scale_min
+        if self.opt.get('test_forward_size', False):
+            #try:
+            scale_min = self.opt['datasets']['train'].get('scale_min', 1.1)
+            h_hr = self.opt.get('test_forward_size', False)
+            h_lr = int(h_hr // scale_min)
+            self.gt = torch.randn(1, 1, h_hr, h_hr, h_hr).to(self.device)
+            self.lq = torch.randn(1, 1, h_lr, h_lr, h_lr).to(self.device)
+            logger.info(f'Running {h_hr}x{h_hr}x{h_hr} test with scale_min: {scale_min}, h_lr: {h_lr}, h_hr: {h_hr}')
+            self.test()
+            del self.gt
+            del self.lq
+            del self.output
+            torch.cuda.empty_cache()
+            logger.info(f'Model passed {h_hr}x{h_hr}x{h_hr} test with scale_min: {scale_min}')
+            #except Exception as e:
+            #    print(e)
+            #    assert False, f'Model failed {h_hr}x{h_hr}x{h_hr} test with scale_min: {e}'
+
     def feed_data(self, data):
-        # {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
-        self.lq = data['lq'].to(self.device)
-        self.gt = data['gt'].to(self.device)
-        # self.delta = data['delta'].to(self.device)
-        # self.vbv = data['vbv'].to(self.device)
-        # self.labels = data['labels'].to(self.device)
-        self.T21_lr_mean = data['T21_lr_mean'].to(self.device)
-        self.T21_lr_std = data['T21_lr_std'].to(self.device)
-        self.scale_factor = data['scale_factor']
-        # self.scale_factor = data['scale_factor']
+        self.lq = data['lq'].to(self.device) if isinstance(data['lq'], torch.Tensor) else [lq.to(self.device) for lq in data['lq']]
+        self.gt = data['gt'].to(self.device) if isinstance(data['gt'], torch.Tensor) else [gt.to(self.device) for gt in data['gt']]
+        self.T21_lr_mean = data['T21_lr_mean'].to(self.device) if isinstance(data['T21_lr_mean'], torch.Tensor) else [mean.to(self.device) for mean in data['T21_lr_mean']]
+        self.T21_lr_std = data['T21_lr_std'].to(self.device) if isinstance(data['T21_lr_std'], torch.Tensor) else [std.to(self.device) for std in data['T21_lr_std']]
+        self.scale_factor = data['scale_factor'].to(self.device) if isinstance(data['scale_factor'], torch.Tensor) else [scale.to(self.device) for scale in data['scale_factor']]
 
     def optimize_parameters(self, current_iter):
+        # with torch.autograd.profiler.emit_nvtx():
         b, c, h, w, d = self.gt.shape
         xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)
         xyz_hr = xyz_hr.view(1, -1, 3)
@@ -96,10 +117,17 @@ class ASR21cmModel(SRModel):
 
             l_total = 0
             loss_dict = OrderedDict()
+
             # l1 loss
-            l_l1 = self.l1_pix(self.output, self.gt)
+            l_l1 = self.l1_loss(self.output, self.gt)
             l_total += l_l1
-        loss_dict['l_l1'] = l_l1
+            loss_dict['l_l1'] = l_l1
+
+            #dsq loss
+            if self.dsq_loss:
+                l_dsq = self.dsq_loss(self.output, self.gt)
+                l_total += l_dsq
+                loss_dict['l_dsq'] = l_dsq
 
         if self.scaler is not None:
             self.scaler.scale(l_total).backward()
@@ -110,9 +138,11 @@ class ASR21cmModel(SRModel):
             self.optimizer_g.step()
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
+        self.log_dict.update({'l_total': l_total.item()})
 
         if self.ema_decay > 0:
             self.model_ema(decay=self.ema_decay)
+        # torch.cuda.memory._dump_snapshot(filename=osp.join(self.opt['path']['experiments_root'], f'{current_iter}_memory_snapshot.pickle')) if torch.cuda.is_available() and self.opt.get('memory_profiling', False) else None
 
     def nondist_validation(self, dataloader, current_iter, tb_logger, save_img):
         dataset_name = dataloader.dataset.opt['name']
@@ -130,7 +160,7 @@ class ASR21cmModel(SRModel):
 
         metric_data = dict()
         if use_pbar:
-            pbar = tqdm(total=len(dataloader), unit='image')
+            pbar = tqdm(total=len(dataloader), unit='cube')
 
         for idx, val_data in enumerate(dataloader):
             self.feed_data(val_data)
@@ -142,6 +172,7 @@ class ASR21cmModel(SRModel):
             metric_data['hr'] = visuals['hr']
             metric_data['mean'] = visuals['mean']
             metric_data['std'] = visuals['std']
+            metric_data['scale_factor'] = visuals['scale_factor']
 
             # tentative for out of GPU memory
             del self.gt
@@ -151,17 +182,25 @@ class ASR21cmModel(SRModel):
             del self.T21_lr_std
             torch.cuda.empty_cache()
 
+            # scale back to mK
+            visuals['sr'] = visuals['sr'] * visuals['std'] + visuals['mean']
+            visuals['hr'] = visuals['hr'] * visuals['std'] + visuals['mean']
+
             if save_img:
                 with torch.no_grad():
-                    b, c, h, w, d = visuals['sr'].shape
-                    visuals['sr'] = visuals['sr'] * visuals['std'] + visuals['mean']
-                    visuals['hr'] = visuals['hr'] * visuals['std'] + visuals['mean']
-                    rmse = ((visuals['sr'] - visuals['hr'])**2).mean(dim=[1, 2, 3, 4]).sqrt()
-                    rmse = rmse.cpu().numpy()
-                    k_hr, dsq_hr = calculate_power_spectrum(data_x=visuals['hr'], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
-                    k_sr, dsq_sr = calculate_power_spectrum(data_x=visuals['sr'], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
+                    sizes = torch.unique(visuals['scale_factor'])
+                    skip = len(visuals['scale_factor']) // len(sizes)
+
+                    hr_cube = visuals['hr'][::skip]
+                    sr_cube = visuals['sr'][::skip]
+                    scale_factor = visuals['scale_factor'][::skip]
+
+                    rmse = ((sr_cube - hr_cube)**2).mean(dim=[1, 2, 3, 4]).sqrt()
+                    k_hr, dsq_hr = calculate_power_spectrum(data_x=hr_cube, Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
+                    k_sr, dsq_sr = calculate_power_spectrum(data_x=sr_cube, Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
 
                     nrows = 4
+                    b, c, h, w, d = sr_cube.shape
                     fig, axes = plt.subplots(nrows, b, figsize=(b * 5, nrows * 5))
                     if b == 1:
                         axes = np.expand_dims(axes, axis=0)
@@ -169,28 +208,29 @@ class ASR21cmModel(SRModel):
 
                     slice_idx = d // 2
                     for i in range(b):
-                        vmin = min(visuals['sr'][i, :, :, slice_idx].min(), visuals['hr'][i, :, :, slice_idx].min())
-                        vmax = max(visuals['sr'][i, :, :, slice_idx].max(), visuals['hr'][i, :, :, slice_idx].max())
+                        vmin = min(sr_cube[i, :, :, slice_idx].min(), hr_cube[i, :, :, slice_idx].min())
+                        vmax = max(sr_cube[i, :, :, slice_idx].max(), hr_cube[i, :, :, slice_idx].max())
+                        rmse_i = rmse[i].item()
+                        scale_i = scale_factor[i].item()
 
-                        axes[0, i].imshow(visuals['hr'][i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
+                        axes[0, i].imshow(hr_cube[i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
                         axes[0, i].set_title('HR')
 
-                        axes[1, i].imshow(visuals['sr'][i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
+                        axes[1, i].imshow(sr_cube[i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
                         axes[1, i].set_title('SR')
 
-                        xmin = min(visuals['sr'][i].min(), visuals['hr'][i].min())
-                        xmax = max(visuals['sr'][i].max(), visuals['hr'][i].max())
+                        xmin = min(sr_cube[i].min(), hr_cube[i].min())
+                        xmax = max(sr_cube[i].max(), hr_cube[i].max())
                         bins = np.linspace(xmin, xmax, 100)
-                        axes[2, i].hist(visuals['hr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', density=True)
-                        axes[2, i].hist(visuals['sr'][i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', density=True)
-                        axes[2, i].legend(title=f'RMSE: {rmse[i]:.2f}, scale: {self.scale_factor:.2f}')
+                        axes[2, i].hist(hr_cube[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', density=True)
+                        axes[2, i].hist(sr_cube[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', density=True)
+                        #axes[2, i].legend(title=f'RMSE: {rmse[i]:.2f}, scale: {self.scale_factor:.2f}')
                         axes[2, i].set_xlabel(r'$T_{{21}}$ [${\rm mK}$]')
 
                         axes[3, i].loglog(k_hr, dsq_hr[i, 0], label='$T_{{21}}$ HR', ls='solid', lw=2)
                         axes[3, i].loglog(k_sr, dsq_sr[i, 0], label='$T_{{21}}$ SR', ls='solid', lw=2)
-                        axes[3, i].legend()
                         axes[3, i].set_xlabel('$k\\ [\\mathrm{{cMpc^{-1}}}]$')
-                        axes[3, i].legend()
+                        axes[3, i].legend(title=f'RMSE: {rmse_i:.2f}, \nscale: {scale_i:.2f}', loc='upper left')
 
                     axes[0, 0].set_ylabel('HR')
                     axes[1, 0].set_ylabel('SR')
@@ -233,27 +273,44 @@ class ASR21cmModel(SRModel):
         print(f'Finished testing {dataset_name} dataset')
 
     def test(self):
-        b, c, h, w, d = self.gt.shape
+        b, c, h, w, d = self.gt.shape if isinstance(self.gt, torch.Tensor) else self.gt[0].shape
         xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)
         xyz_hr = xyz_hr.view(1, -1, 3)
         xyz_hr = xyz_hr.repeat(b, 1, 1)
         if hasattr(self, 'net_g_ema'):
             self.net_g_ema.eval()
             with torch.no_grad():
-                self.output = self.net_g_ema(self.lq, xyz_hr)
+                if isinstance(self.lq, torch.Tensor):
+                    with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+                        self.output = self.net_g_ema(self.lq, xyz_hr)
+                elif isinstance(self.lq, list):
+                    #tqdm loop verbose argument
+                    with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+                        self.output = []
+                        for lq in tqdm(self.lq, total=len(self.lq), disable=not self.opt['val'].get('pbar', False), desc='testing scales'):
+                            self.output.append(self.net_g_ema(lq, xyz_hr))
         else:
             self.net_g.eval()
             with torch.no_grad():
-                self.output = self.net_g(self.lq, xyz_hr)
+                if isinstance(self.lq, torch.Tensor):
+                    with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+                        self.output = self.net_g(self.lq, xyz_hr)
+                elif isinstance(self.lq, list):
+                    with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+
+                        self.output = []
+                        for lq in tqdm(self.lq, total=len(self.lq), disable=not self.opt['val'].get('pbar', False), desc='testing scales'):
+                            self.output.append(self.net_g(lq, xyz_hr))
             self.net_g.train()
 
     def get_current_visuals(self):
         out_dict = OrderedDict()
-        out_dict['lq'] = self.lq.detach().cpu()
-        out_dict['sr'] = self.output.detach().cpu()
-        out_dict['hr'] = self.gt.detach().cpu()
-        out_dict['mean'] = self.T21_lr_mean.detach().cpu()
-        out_dict['std'] = self.T21_lr_std.detach().cpu()
+        # out_dict['lq'] = self.lq.detach().cpu() if isinstance(self.lq, torch.Tensor) else [lq.detach().cpu() for lq in self.lq]
+        out_dict['sr'] = self.output.detach().cpu() if isinstance(self.output, torch.Tensor) else torch.cat(self.output, dim=0).detach().cpu()
+        out_dict['hr'] = self.gt.detach().cpu() if isinstance(self.gt, torch.Tensor) else torch.cat(self.gt, dim=0).detach().cpu()
+        out_dict['mean'] = self.T21_lr_mean.detach().cpu() if isinstance(self.T21_lr_mean, torch.Tensor) else torch.cat(self.T21_lr_mean, dim=0).detach().cpu()
+        out_dict['std'] = self.T21_lr_std.detach().cpu() if isinstance(self.T21_lr_std, torch.Tensor) else torch.cat(self.T21_lr_std, dim=0).detach().cpu()
+        out_dict['scale_factor'] = self.scale_factor if isinstance(self.scale_factor, torch.Tensor) else torch.cat(self.scale_factor, dim=0).detach().cpu()
         return out_dict
 
     @master_only

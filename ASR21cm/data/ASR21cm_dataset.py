@@ -29,8 +29,9 @@ class Custom21cmDataset(torch.utils.data.Dataset):
             phase (str): 'train' or 'val'.
     """
 
-    def __init__(self, opt, device='cpu'):
+    def __init__(self, opt, device='cpu', phase='train'):
 
+        self.phase = phase
         self.device = device
         self.opt = opt
         self.path_T21 = opt['dataroot_gt']
@@ -131,7 +132,7 @@ class Custom21cmDataset(torch.utils.data.Dataset):
         return self.dataset
 
 
-def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box):
+def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box, h_lr=None, phase='train'):
     T21, delta, vbv, labels = zip(*batch)
     T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
     delta = torch.concatenate(delta, dim=0).unsqueeze(1)
@@ -148,34 +149,82 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box):
 
     b, c, h, w, d = T21.shape
     size_min = h // scale_max
-    size_max = h // scale_min
-    h_lr = np.random.randint(size_min, size_max + 1, size=1)[0]
-    scale_factor = h / h_lr
-    # scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
-    # while (round(h / scale_factor) / 4) % 2 != 0:  # hardcoded 4 because of the 4x downsampling
-    #     scale_factor = np.random.rand(1)[0] * (scale_max - scale_min) + scale_min
-    # h_lr = round(h / scale_factor)
-    T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
-    T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
-    T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-    T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-    T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
-    T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
-    delta, _, _ = utils.normalize(delta, mode='standard')
-    vbv, _, _ = utils.normalize(vbv, mode='standard')
-    if one_box:
-        T21 = T21[:1]
-        delta = delta[:1]
-        vbv = vbv[:1]
-        T21_lr = T21_lr[:1]
-        labels = labels[:1]
-        T21_lr_mean = T21_lr_mean[:1]
-        T21_lr_std = T21_lr_std[:1]
+    size_max = h // scale_min + 1
+
+    if phase == 'train':
+        #if size_min % 2 != 0:
+        #    size_min += 1
+        available_sizes = torch.arange(start=size_min, end=size_max, step=1, dtype=torch.int32)
+        #available_sizes = [size for size in available_sizes if size % 4 == 0]
+        #available_sizes = torch.as_tensor(available_sizes, dtype=torch.int32)
+
+        random_idx = torch.randint(low=0, high=available_sizes.shape[0], size=(1, ))
+        h_lr = available_sizes[random_idx][0].item()
+
+        #h_lr = np.random.randint(size_min, size_max, size=1)[0]
+        scale_factor = torch.full((b, 1, 1, 1, 1), h / h_lr)
+
+        T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
+        T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
+        T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+        T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+        T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
+        T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
+        delta, _, _ = utils.normalize(delta, mode='standard')
+        vbv, _, _ = utils.normalize(vbv, mode='standard')
+        if one_box:
+            T21 = T21[:1]
+            delta = delta[:1]
+            vbv = vbv[:1]
+            T21_lr = T21_lr[:1]
+            labels = labels[:1]
+            T21_lr_mean = T21_lr_mean[:1]
+            T21_lr_std = T21_lr_std[:1]
+    elif phase == 'val':
+        #test fixed h_lr
+        if h_lr is None:
+            h_lr = [h // i for i in range(2, 5)]
+        elif isinstance(h_lr, int):
+            h_lr = [h // h_lr]
+        elif isinstance(h_lr, list):
+            h_lr = h_lr
+        elif h_lr == 'random':
+            h_lr = np.random.randint(size_min, size_max, size=1)
+
+        scale_factor = [torch.full((b, 1, 1, 1, 1), h / size) for size in h_lr]
+
+        T21_lr = [torch.nn.functional.interpolate(T21, size=size, mode='trilinear') for size in h_lr]
+        T21_lr_mean = [torch.mean(T21_lr_i, dim=(1, 2, 3, 4), keepdim=True) for T21_lr_i in T21_lr]
+        T21_lr_std = [torch.std(T21_lr_i, dim=(1, 2, 3, 4), keepdim=True) for T21_lr_i in T21_lr]
+        T21_lr = [utils.normalize(T21_lr_i, mode='standard')[0] for T21_lr_i in T21_lr]
+
+        T21 = [utils.normalize(T21, mode='standard', x_mean=T21_lr_mean[i], x_std=T21_lr_std[i])[0] for i in range(len(h_lr))]
+        delta = [utils.normalize(delta, mode='standard')[0] for i in range(len(h_lr))]
+        vbv = [utils.normalize(vbv, mode='standard')[0] for i in range(len(h_lr))]
+        labels = [labels for i in range(len(h_lr))]
+        if one_box:
+            T21 = [T21_i[:1] for T21_i in T21]
+            delta = [delta_i[:1] for delta_i in delta]
+            vbv = [vbv_i[:1] for vbv_i in vbv]
+            labels = [labels_i[:1] for labels_i in labels]
+            T21_lr = [T21_lr_i[:1] for T21_lr_i in T21_lr]
+            T21_lr_mean = [T21_lr_mean_i[:1] for T21_lr_mean_i in T21_lr_mean]
+            T21_lr_std = [T21_lr_std_i[:1] for T21_lr_std_i in T21_lr_std]
+            scale_factor = [scale_factor_i[:1] for scale_factor_i in scale_factor]
+    else:
+        raise ValueError(f'Unknown phase: {phase}')
+
     return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
 
 
-def create_collate_fn(opt):
-    return partial(collate_fn, cut_factor=opt['cut_factor'], scale_min=opt['scale_min'], scale_max=opt['scale_max'], n_augment=opt['n_augment'], one_box=opt['one_box'])
+def create_collate_fn(opt, phase='train'):
+    cut_factor = opt.get('cut_factor', 1)
+    scale_min = opt.get('scale_min', 1.1)
+    scale_max = opt.get('scale_max', 4.5)
+    n_augment = opt.get('n_augment', 1)
+    one_box = opt.get('one_box', True)
+    h_lr = opt.get('val_size', None)
+    return partial(collate_fn, cut_factor=cut_factor, scale_min=scale_min, scale_max=scale_max, n_augment=n_augment, one_box=one_box, h_lr=h_lr, phase=phase)
 
 
 if __name__ == '__main__':

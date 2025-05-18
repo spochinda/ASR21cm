@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 
 from ASR21cm.archs.arch_utils import RDN, MLP_decoder, make_coord  # MambaIR, MambaIREncoder
+from ASR21cm.archs.unet_utils import SongUNet
 from basicsr.utils.registry import ARCH_REGISTRY
 
 
@@ -11,18 +12,15 @@ class ArSSR(nn.Module):
 
     def __init__(
             self,  # hr_size,
-            dim,
-            decoder_depth,
-            decoder_width,
+            ArSSR_opt,
+            encoder_opt,
+            decoder_opt,
             use_checkpoint=False,
             **kwargs):
         super(ArSSR, self).__init__()
         self.multi_gpu = kwargs.get('multi_gpu', False)
         self.device = kwargs.get('device', torch.device('cpu'))
 
-        self.use_checkpoint = use_checkpoint
-        # self.hr_size = hr_size
-        self.feature_dim = int(dim * 2**4)
         # self.encoder = MambaIREncoder(
         #     inp_channels=1,
         #     out_channels=1,
@@ -33,9 +31,13 @@ class ArSSR(nn.Module):
         #     bias=False,
         #     )
         # self.encoder = MambaIR(in_chans=1, embed_dim=self.feature_dim, depths=(6, 6, 6, 6), drop_rate=0., d_state=16, mlp_ratio=1., drop_path_rate=0.1, norm_layer=nn.LayerNorm, patch_norm=True, use_checkpoint=self.use_checkpoint, upscale=None, **kwargs)
-        self.encoder = RDN(feature_dim=self.feature_dim, num_features=64, growth_rate=64, num_blocks=8, num_layers=3)
+        # self.encoder = RDN(latent_dim=self.feature_dim, num_features=self.num_features, growth_rate=self.growth_rate, num_blocks=self.num_blocks, num_layers=self.num_layers, use_checkpoint=self.use_checkpoint)
+        encoder_type = encoder_opt.pop('type', 'RDN')
+        self.encoder = globals()[encoder_type](**ArSSR_opt, **encoder_opt)
 
-        self.decoder = MLP_decoder(in_dim=self.feature_dim + 3, out_dim=1, depth=decoder_depth, width=decoder_width, **kwargs)
+        # self.decoder = MLP_decoder(in_dim=self.feature_dim + 3, out_dim=1, depth=decoder_depth, width=decoder_width, use_checkpoint=self.use_checkpoint)
+        decoder_type = decoder_opt.pop('type', 'MLP_decoder')
+        self.decoder = globals()[decoder_type](**ArSSR_opt, **decoder_opt)
 
     def forward(self, img_lr, xyz_hr):
         """
@@ -47,10 +49,11 @@ class ArSSR(nn.Module):
             {h,w,d}: dimensional size of LR input image
         """
         # extract feature map from LR image
-        if self.use_checkpoint:
-            feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
-        else:
-            feature_map = self.encoder(img_lr)
+        # if False:#self.use_checkpoint:
+        #    feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
+        # else:
+        feature_map = self.encoder(img_lr)
+        #feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
 
         # generate feature vector for coordinate through trilinear interpolation (Equ. 4 & Fig. 3).
         coords = xyz_hr.flip(-1)
