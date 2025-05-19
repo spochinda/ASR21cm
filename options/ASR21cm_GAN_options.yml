@@ -1,0 +1,154 @@
+# general settings
+name: ASR21cm_GAN
+model_type: ESRASRGANModel
+scale:
+num_gpu: 0  # set num_gpu: 0 for cpu mode
+manual_seed: 0
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: T21train
+    type: Custom21cmDataset
+    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes/
+    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes/
+    redshifts: [10,]
+    IC_seeds: [0,]
+    Npix: 256
+    cut_factor: 2
+    scale_max: 4.
+    scale_min: 2.
+    n_augment: 1
+    one_box: true
+    io_backend:
+      type: disk
+
+    # data loader
+    use_shuffle: true
+    num_worker_per_gpu: 3
+    batch_size_per_gpu: 1
+    dataset_enlarge_ratio: 10
+    prefetch_mode: ~
+
+  val:
+    name: T21val
+    type: Custom21cmDataset
+    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes
+    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes
+    redshifts: [10,]
+    IC_seeds: [2,]
+    Npix: 256
+    cut_factor: 0
+    scale_max: 4.5
+    scale_min: 1.1
+    n_augment: 1
+    one_box: true
+    io_backend:
+      type: disk
+
+# network structures
+network_g:
+  type: ArSSR
+  ArSSR_opt:
+    latent_dim: 32 #  4 # 8 # 32
+    use_checkpoint: true
+  encoder_opt:
+    type: SongUNet
+    in_channels: 1
+    augment_dim: 0
+    channel_mult: [1,2,]
+    num_blocks: 4
+    attn_levels: []
+    dropout: 0.10
+  decoder_opt:
+    type: MLP_decoder
+    out_dim: 1
+    depth: 4 # 4
+    width: 64 # 8
+    activation: LeakyReLU # LeakyReLU ReLU Tanh
+    chunk: false # have to chunk for onebox=false
+
+
+network_d:
+  type: VGGStyleDiscriminator3D
+  num_in_ch: 1
+  num_feat: 32
+  input_size: 64
+
+# path
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+# training settings
+train:
+  ema_decay: 0.999
+  optim_g:
+    type: Adam
+    lr: !!float 1e-4
+    weight_decay: 0
+    betas: [0.9, 0.99]
+  optim_d:
+    type: Adam
+    lr: !!float 1e-4
+    weight_decay: 0
+    betas: [0.9, 0.99]
+
+  scheduler:
+    type: MultiStepLR
+    milestones: [50000, 100000, 200000, 300000]
+    gamma: 0.5
+
+  total_iter: 400000
+  warmup_iter: -1  # no warm up
+
+  # losses
+  pixel_opt:
+    type: L1Loss
+    loss_weight: !!float 1e-2
+    reduction: mean
+#  perceptual_opt:
+#    type: PerceptualLoss
+#    layer_weights:
+#      'conv5_4': 1  # before relu
+#    vgg_type: vgg19
+#    use_input_norm: true
+#    range_norm: false
+#    perceptual_weight: 1.0
+#    style_weight: 0
+#    criterion: l1
+  gan_opt:
+    type: GANLoss
+    gan_type: vanilla
+    real_label_val: 1.0
+    fake_label_val: 0.0
+    loss_weight: !!float 5e-3
+
+  net_d_iters: 1
+  net_d_init_iters: 0
+
+# validation settings
+val:
+  val_freq: !!float 5e3
+  save_img: false
+  pbar: true
+
+  metrics:
+    rmse:
+      type: calculate_rmse
+      better: 'lower'
+
+# logging settings
+logger:
+  print_freq: 100
+  save_checkpoint_freq: !!float 5e3
+  use_tb_logger: true
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+dist_params:
+  backend: nccl
+  port: 29500
