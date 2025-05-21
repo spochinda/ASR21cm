@@ -16,7 +16,8 @@ from basicsr.utils import AvgTimer, MessageLogger, get_env_info, get_root_logger
 from basicsr.utils.options import copy_opt_file, dict2str, parse_options
 
 
-def create_train_val_dataloader(opt, logger):
+def create_train_val_dataloader(opt, logger, **kwargs):
+    simple_sampler = kwargs.get('simple_sampler', False)
     # create train and val dataloaders
     train_loader, val_loaders = None, []
     for phase, dataset_opt in opt['datasets'].items():
@@ -24,26 +25,34 @@ def create_train_val_dataloader(opt, logger):
             dataset_enlarge_ratio = dataset_opt.get('dataset_enlarge_ratio', 1)
             train_set = build_dataset(dataset_opt)
             train_set.phase = 'train'
-            train_sampler = EnlargedSampler(train_set, opt['world_size'], opt['rank'], dataset_enlarge_ratio)
+            if not simple_sampler:
+                train_sampler = EnlargedSampler(train_set, opt['world_size'], opt['rank'], dataset_enlarge_ratio)
+            else:
+                if opt['dist']:
+                    train_sampler = torch.utils.data.distributed.DistributedSampler(train_set, num_replicas=opt['world_size'], rank=opt['rank'])
+                else:
+                    train_sampler = None
             collate_fn = create_collate_fn(dataset_opt, phase=phase)
             train_loader = build_dataloader(train_set, dataset_opt, collate_fn, num_gpu=opt['num_gpu'], dist=opt['dist'], sampler=train_sampler, seed=opt['manual_seed'])
 
             num_iter_per_epoch = math.ceil(len(train_set) * dataset_enlarge_ratio / (dataset_opt['batch_size_per_gpu'] * opt['world_size']))
             total_iters = int(opt['train']['total_iter'])
             total_epochs = math.ceil(total_iters / (num_iter_per_epoch))
-            logger.info('Training statistics:'
-                        f'\n\tNumber of train images: {len(train_set)}'
-                        f'\n\tDataset enlarge ratio: {dataset_enlarge_ratio}'
-                        f'\n\tBatch size per gpu: {dataset_opt["batch_size_per_gpu"]}'
-                        f'\n\tWorld size (gpu number): {opt["world_size"]}'
-                        f'\n\tRequire iter number per epoch: {num_iter_per_epoch}'
-                        f'\n\tTotal epochs: {total_epochs}; iters: {total_iters}.')
+            if logger is not None:
+                logger.info('Training statistics:'
+                            f'\n\tNumber of train images: {len(train_set)}'
+                            f'\n\tDataset enlarge ratio: {dataset_enlarge_ratio}'
+                            f'\n\tBatch size per gpu: {dataset_opt["batch_size_per_gpu"]}'
+                            f'\n\tWorld size (gpu number): {opt["world_size"]}'
+                            f'\n\tRequire iter number per epoch: {num_iter_per_epoch}'
+                            f'\n\tTotal epochs: {total_epochs}; iters: {total_iters}.')
         elif phase.split('_')[0] == 'val':
             val_set = build_dataset(dataset_opt)
             val_set.phase = phase
             collate_fn = create_collate_fn(dataset_opt, phase=phase)
             val_loader = build_dataloader(val_set, dataset_opt, collate_fn, num_gpu=opt['num_gpu'], dist=opt['dist'], sampler=None, seed=opt['manual_seed'])
-            logger.info(f'Number of val images/folders in {dataset_opt["name"]}: {len(val_set)}')
+            if logger is not None:
+                logger.info(f'Number of val images/folders in {dataset_opt["name"]}: {len(val_set)}')
             val_loaders.append(val_loader)
         else:
             raise ValueError(f'Dataset phase {phase} is not recognized.')
@@ -80,8 +89,10 @@ def train_pipeline(root_path):
     tb_logger = init_tb_loggers(opt)
 
     # create train and validation dataloaders
-    result = create_train_val_dataloader(opt, logger)
+    simple_sampler = False
+    result = create_train_val_dataloader(opt, logger, simple_sampler=simple_sampler)
     train_loader, train_sampler, val_loaders, total_epochs, total_iters = result
+    print(f'type(train_loader) = {type(train_loader)}, len(train_loader) = {len(train_loader)}, type(train_sampler) = {type(train_sampler)}, len(val_loaders) = {len(val_loaders)}')
 
     # create model
     model = build_model(opt)
@@ -97,27 +108,36 @@ def train_pipeline(root_path):
     # create message logger (formatted outputs)
     msg_logger = MessageLogger(opt, current_iter, tb_logger)
 
-    # dataloader prefetcher
-    prefetch_mode = opt['datasets']['train'].get('prefetch_mode')
-    if prefetch_mode is None or prefetch_mode == 'cpu':
-        prefetcher = CPUPrefetcher(train_loader)
-    elif prefetch_mode == 'cuda':
-        prefetcher = CUDAPrefetcher(train_loader, opt)
-        logger.info(f'Use {prefetch_mode} prefetch dataloader')
-        if opt['datasets']['train'].get('pin_memory') is not True:
-            raise ValueError('Please set pin_memory=True for CUDAPrefetcher.')
+    if not simple_sampler:
+        # dataloader prefetcher
+        prefetch_mode = opt['datasets']['train'].get('prefetch_mode')
+        if prefetch_mode is None or prefetch_mode == 'cpu':
+            prefetcher = CPUPrefetcher(train_loader)
+        elif prefetch_mode == 'cuda':
+            prefetcher = CUDAPrefetcher(train_loader, opt)
+            logger.info(f'Use {prefetch_mode} prefetch dataloader')
+            if opt['datasets']['train'].get('pin_memory') is not True:
+                raise ValueError('Please set pin_memory=True for CUDAPrefetcher.')
+        else:
+            raise ValueError(f"Wrong prefetch_mode {prefetch_mode}. Supported ones are: None, 'cuda', 'cpu'.")
     else:
-        raise ValueError(f"Wrong prefetch_mode {prefetch_mode}. Supported ones are: None, 'cuda', 'cpu'.")
-
+        prefetcher = None
     # training
     logger.info(f'Start training from epoch: {start_epoch}, iter: {current_iter}')
     data_timer, iter_timer = AvgTimer(), AvgTimer()
     start_time = time.time()
-
+    # with torch.autograd.profiler.emit_nvtx():
     for epoch in range(start_epoch, total_epochs + 1):
-        train_sampler.set_epoch(epoch)
-        prefetcher.reset()
-        train_data = prefetcher.next()
+        # train_sampler.set_epoch(epoch)
+        if isinstance(train_sampler, EnlargedSampler) or isinstance(train_sampler, torch.utils.data.distributed.DistributedSampler):
+            train_sampler.set_epoch(epoch)
+        if prefetcher is not None:
+            prefetcher.reset()
+            train_data = prefetcher.next()
+        else:
+            train_data_iter = iter(train_loader)
+            train_data = next(train_data_iter)
+
         torch.cuda.memory._record_memory_history() if torch.cuda.is_available() and opt.get('memory_profiling', False) else None
         while train_data is not None:
             data_timer.record()
@@ -157,9 +177,15 @@ def train_pipeline(root_path):
 
             data_timer.start()
             iter_timer.start()
-            train_data = prefetcher.next()
-        # end of iter
 
+            if isinstance(train_sampler, EnlargedSampler):
+                train_data = prefetcher.next()
+            else:
+                try:
+                    train_data = next(train_data_iter)
+                except StopIteration:
+                    train_data = None
+        # end of iter
     # end of epoch
 
     consumed_time = str(datetime.timedelta(seconds=int(time.time() - start_time)))

@@ -123,7 +123,7 @@ class VGGStyleDiscriminator3D(nn.Module):
         self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
     def forward(self, x):
-        assert x.size(2) == self.input_size, (f'Input size must be identical to input_size, but received {x.size()}.')
+        assert x.size(2) == self.input_size, (f'Input size must be identical to input_size {self.input_size}, but received {x.size()}. Consider checking if network_d[input_size] == datasets[train][gt_size] in the config file.')
 
         feat = self.lrelu(self.conv0_0(x))
         feat = self.lrelu(self.bn0_1(self.conv0_1(feat)))  # output spatial size: /2

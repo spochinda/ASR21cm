@@ -226,7 +226,7 @@ class ESRASRGANModel(SRGANModel):
         b, c, h, w, d = self.gt.shape if isinstance(self.gt, torch.Tensor) else self.gt[0].shape
         xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)
         xyz_hr = xyz_hr.view(1, -1, 3)
-        xyz_hr = xyz_hr.repeat(b, 1, 1)
+        xyz_hr = xyz_hr.repeat(b, 1, 1).to(self.device)
         if hasattr(self, 'net_g_ema'):
             self.net_g_ema.eval()
             with torch.no_grad():

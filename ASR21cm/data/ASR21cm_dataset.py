@@ -2,6 +2,7 @@ import numpy as np
 import os
 import pandas as pd
 import SR21cm.utils as utils
+import time
 import torch
 from functools import partial
 from scipy.io import loadmat
@@ -47,7 +48,9 @@ class Custom21cmDataset(torch.utils.data.Dataset):
         self.scale_max = opt['scale_max']
         self.scale_min = opt['scale_min']
         self.n_augment = opt['n_augment']
-        self.one_box = opt['one_box']
+        #self.one_box = opt['one_box']
+        self.gt_size = opt['gt_size']
+        self.conditional_cubes = opt.get('conditional_cubes', False)
 
     def __len__(self):
         return len(self.df)
@@ -55,11 +58,11 @@ class Custom21cmDataset(torch.utils.data.Dataset):
     @torch.no_grad()
     def __getitem__(self, idx):
         assert hasattr(self, 'df'), 'DataFrame not found. Please run getDataFrame() first.'
+        start_time = time.time()
         T21 = self.dataset.tensors[0][idx]
         delta = self.dataset.tensors[1][idx]
         vbv = self.dataset.tensors[2][idx]
         labels = self.dataset.tensors[3][idx]
-
         return [T21, delta, vbv, labels]
 
     def getDataFrame(self):
@@ -132,18 +135,28 @@ class Custom21cmDataset(torch.utils.data.Dataset):
         return self.dataset
 
 
-def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box, h_lr=None, phase='train'):
+def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr=None, phase='train', **kwargs):
+    conditional_cubes = kwargs.get('conditional_cubes', False)
+
     T21, delta, vbv, labels = zip(*batch)
     T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
-    delta = torch.concatenate(delta, dim=0).unsqueeze(1)
-    vbv = torch.concatenate(vbv, dim=0).unsqueeze(1)
+    #T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
+
+    if conditional_cubes:
+        delta = torch.concatenate(delta, dim=0).unsqueeze(1)
+        #delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
+        vbv = torch.concatenate(vbv, dim=0).unsqueeze(1)
+        #vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
+        cubes = torch.cat([T21, delta, vbv], dim=1)
+        cubes = random_spatial_crop(cubes, crop_size=gt_size)
+        T21, T21_lr, delta, vbv = cubes.split([1, 1, 1, 1], dim=1)
+    else:
+        T21 = random_spatial_crop(T21, crop_size=gt_size)
+        #cubes = random_spatial_crop(cubes, crop_size=64)
+
     labels = torch.concatenate(labels, dim=0)
     b, label_dim = labels.shape
     expansion_factor = 2**(3 * cut_factor)
-
-    T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
-    delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
-    vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
     labels = labels.repeat(1, expansion_factor)
     labels = labels.view(b * expansion_factor, label_dim)
 
@@ -152,34 +165,25 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box, h_lr
     size_max = h // scale_min + 1
 
     if phase == 'train':
-        #if size_min % 2 != 0:
-        #    size_min += 1
         available_sizes = torch.arange(start=size_min, end=size_max, step=1, dtype=torch.int32)
-        #available_sizes = [size for size in available_sizes if size % 4 == 0]
-        #available_sizes = torch.as_tensor(available_sizes, dtype=torch.int32)
 
         random_idx = torch.randint(low=0, high=available_sizes.shape[0], size=(1, ))
         h_lr = available_sizes[random_idx][0].item()
 
         #h_lr = np.random.randint(size_min, size_max, size=1)[0]
         scale_factor = torch.full((b, 1, 1, 1, 1), h / h_lr)
-
         T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
-        T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
+        #T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
         T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
         T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
         T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
         T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
-        delta, _, _ = utils.normalize(delta, mode='standard')
-        vbv, _, _ = utils.normalize(vbv, mode='standard')
-        if one_box:
-            T21 = T21[:1]
-            delta = delta[:1]
-            vbv = vbv[:1]
-            T21_lr = T21_lr[:1]
-            labels = labels[:1]
-            T21_lr_mean = T21_lr_mean[:1]
-            T21_lr_std = T21_lr_std[:1]
+
+        if conditional_cubes:
+            delta, _, _ = utils.normalize(delta, mode='standard')
+            vbv, _, _ = utils.normalize(vbv, mode='standard')
+
+        conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     elif phase == 'val':
         #test fixed h_lr
         if h_lr is None:
@@ -197,24 +201,18 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, one_box, h_lr
         T21_lr_mean = [torch.mean(T21_lr_i, dim=(1, 2, 3, 4), keepdim=True) for T21_lr_i in T21_lr]
         T21_lr_std = [torch.std(T21_lr_i, dim=(1, 2, 3, 4), keepdim=True) for T21_lr_i in T21_lr]
         T21_lr = [utils.normalize(T21_lr_i, mode='standard')[0] for T21_lr_i in T21_lr]
-
         T21 = [utils.normalize(T21, mode='standard', x_mean=T21_lr_mean[i], x_std=T21_lr_std[i])[0] for i in range(len(h_lr))]
-        delta = [utils.normalize(delta, mode='standard')[0] for i in range(len(h_lr))]
-        vbv = [utils.normalize(vbv, mode='standard')[0] for i in range(len(h_lr))]
         labels = [labels for i in range(len(h_lr))]
-        if one_box:
-            T21 = [T21_i[:1] for T21_i in T21]
-            delta = [delta_i[:1] for delta_i in delta]
-            vbv = [vbv_i[:1] for vbv_i in vbv]
-            labels = [labels_i[:1] for labels_i in labels]
-            T21_lr = [T21_lr_i[:1] for T21_lr_i in T21_lr]
-            T21_lr_mean = [T21_lr_mean_i[:1] for T21_lr_mean_i in T21_lr_mean]
-            T21_lr_std = [T21_lr_std_i[:1] for T21_lr_std_i in T21_lr_std]
-            scale_factor = [scale_factor_i[:1] for scale_factor_i in scale_factor]
+
+        if conditional_cubes:
+            delta = [utils.normalize(delta, mode='standard')[0] for i in range(len(h_lr))]
+            vbv = [utils.normalize(vbv, mode='standard')[0] for i in range(len(h_lr))]
+
+        conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     else:
         raise ValueError(f'Unknown phase: {phase}')
-
-    return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
+    #return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
+    return dict(lq=T21_lr, gt=T21, delta=delta, vbv=vbv, labels=labels, T21_lr_mean=T21_lr_mean, T21_lr_std=T21_lr_std, scale_factor=scale_factor, **conditional_cubes)
 
 
 def create_collate_fn(opt, phase='train'):
@@ -222,9 +220,32 @@ def create_collate_fn(opt, phase='train'):
     scale_min = opt.get('scale_min', 1.1)
     scale_max = opt.get('scale_max', 4.5)
     n_augment = opt.get('n_augment', 1)
-    one_box = opt.get('one_box', True)
     h_lr = opt.get('val_size', None)
-    return partial(collate_fn, cut_factor=cut_factor, scale_min=scale_min, scale_max=scale_max, n_augment=n_augment, one_box=one_box, h_lr=h_lr, phase=phase)
+    gt_size = opt.get('gt_size', 64)
+    return partial(collate_fn, cut_factor=cut_factor, scale_min=scale_min, scale_max=scale_max, n_augment=n_augment, h_lr=h_lr, gt_size=gt_size, phase=phase)
+
+
+def random_spatial_crop(tensor, crop_size):
+    """
+    Perform a random crop on a 5D tensor (B, C, H, W, D).
+
+    Args:
+        tensor (torch.Tensor): Input tensor of shape (B, C, H, W, D).
+        crop_size (int): Size of the cube to crop along spatial dimensions.
+
+    Returns:
+        torch.Tensor: Cropped tensor of shape (B, C, crop_size, crop_size, crop_size).
+    """
+    assert tensor.ndim == 5, 'Input tensor must be 5D (B, C, H, W, D)'
+    B, C, H, W, D = tensor.shape
+    assert crop_size <= H and crop_size <= W and crop_size <= D, 'Crop size must be <= each spatial dimension'
+
+    # Random starting indices for each spatial dimension
+    h_start = torch.randint(0, H - crop_size + 1, (1, )).item()
+    w_start = torch.randint(0, W - crop_size + 1, (1, )).item()
+    d_start = torch.randint(0, D - crop_size + 1, (1, )).item()
+
+    return tensor[:, :, h_start:h_start + crop_size, w_start:w_start + crop_size, d_start:d_start + crop_size]
 
 
 if __name__ == '__main__':
