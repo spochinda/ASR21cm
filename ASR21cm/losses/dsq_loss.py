@@ -1,7 +1,6 @@
 import torch
 from SR21cm.utils import calculate_power_spectrum
 from torch import nn as nn
-from torch.nn import functional as F
 
 from basicsr.utils.registry import LOSS_REGISTRY
 

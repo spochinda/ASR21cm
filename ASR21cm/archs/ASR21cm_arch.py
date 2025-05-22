@@ -2,8 +2,8 @@
 import torch
 import torch.nn as nn
 
-from ASR21cm.archs.arch_utils import RDN, MLP_decoder, make_coord  # MambaIR, MambaIREncoder
-from ASR21cm.archs.unet_utils import SongUNet
+from ASR21cm.archs.arch_utils import *  # RDN, MLP_decoder, make_coord  # MambaIR, MambaIREncoder
+from ASR21cm.archs.unet_utils import *  # SongUNet
 from basicsr.utils.registry import ARCH_REGISTRY
 
 
@@ -53,12 +53,13 @@ class ArSSR(nn.Module):
         #    feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
         # else:
         feature_map = self.encoder(img_lr)
-        #feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
+        # feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
 
         # generate feature vector for coordinate through trilinear interpolation (Equ. 4 & Fig. 3).
         coords = xyz_hr.flip(-1)
         coords = coords.unsqueeze(1).unsqueeze(1)
-        feature_vector = nn.functional.grid_sample(feature_map, coords, mode='bilinear', align_corners=False)[:, :, 0, 0, :].permute(0, 2, 1)
+        feature_vector = nn.functional.grid_sample(feature_map, coords, mode='bilinear', align_corners=False)
+        feature_vector = feature_vector[:, :, 0, 0, :].permute(0, 2, 1)
         # concatenate coordinate with feature vector
         feature_vector_and_xyz_hr = torch.cat([feature_vector, xyz_hr], dim=-1)  # N×K×(3+feature_dim)
         # estimate the voxel intensity at the coordinate by using decoder.
@@ -68,10 +69,11 @@ class ArSSR(nn.Module):
 
         h = w = d = int(round(K**(1 / 3)))
         img_sr = img_sr.view(N, 1, h, w, d)
-        return img_sr
+        return img_sr, feature_map
 
 
 if __name__ == '__main__':
+    """
     import numpy as np
     h = 93
     b = 2
@@ -91,3 +93,4 @@ if __name__ == '__main__':
     network = ArSSR(dim=4, decoder_depth=4, decoder_width=8)
     output = network(img_lr=T21_lr, xyz_hr=xyz_hr)
     print(output.shape)
+    """

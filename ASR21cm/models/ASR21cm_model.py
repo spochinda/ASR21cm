@@ -80,7 +80,6 @@ class ASR21cmModel(SRModel):
 
         # test that model can run 512x512x512 data with scale_min
         if self.opt.get('test_forward_size', False):
-            #try:
             scale_min = self.opt['datasets']['train'].get('scale_min', 1.1)
             h_hr = self.opt.get('test_forward_size', False)
             h_lr = int(h_hr // scale_min)
@@ -93,9 +92,6 @@ class ASR21cmModel(SRModel):
             del self.output
             torch.cuda.empty_cache()
             logger.info(f'Model passed {h_hr}x{h_hr}x{h_hr} test with scale_min: {scale_min}')
-            #except Exception as e:
-            #    print(e)
-            #    assert False, f'Model failed {h_hr}x{h_hr}x{h_hr} test with scale_min: {e}'
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device) if isinstance(data['lq'], torch.Tensor) else [lq.to(self.device) for lq in data['lq']]
@@ -123,7 +119,7 @@ class ASR21cmModel(SRModel):
             l_total += l_l1
             loss_dict['l_l1'] = l_l1
 
-            #dsq loss
+            # dsq loss
             if self.dsq_loss:
                 l_dsq = self.dsq_loss(self.output, self.gt)
                 l_total += l_dsq
@@ -224,7 +220,6 @@ class ASR21cmModel(SRModel):
                         bins = np.linspace(xmin, xmax, 100)
                         axes[2, i].hist(hr_cube[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', density=True)
                         axes[2, i].hist(sr_cube[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', density=True)
-                        #axes[2, i].legend(title=f'RMSE: {rmse[i]:.2f}, scale: {self.scale_factor:.2f}')
                         axes[2, i].set_xlabel(r'$T_{{21}}$ [${\rm mK}$]')
 
                         axes[3, i].loglog(k_hr, dsq_hr[i, 0], label='$T_{{21}}$ HR', ls='solid', lw=2)
@@ -284,7 +279,6 @@ class ASR21cmModel(SRModel):
                     with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                         self.output = self.net_g_ema(self.lq, xyz_hr)
                 elif isinstance(self.lq, list):
-                    #tqdm loop verbose argument
                     with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                         self.output = []
                         for lq in tqdm(self.lq, total=len(self.lq), disable=not self.opt['val'].get('pbar', False), desc='testing scales'):

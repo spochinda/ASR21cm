@@ -16,6 +16,12 @@ from basicsr.utils.registry import MODEL_REGISTRY
 class ESRASRGANModel(SRGANModel):
     """ESRGAN model for single image super-resolution."""
 
+    def init_training_settings(self):
+        super(ESRASRGANModel, self).init_training_settings()
+
+        self.net_g_iters = self.opt['train'].get('net_g_iters', 1)
+        self.net_g_init_iters = self.opt['train'].get('net_g_init_iters', 0)
+
     def optimize_parameters(self, current_iter):
         # optimize net_g
         b, c, h, w, d = self.gt.shape
@@ -27,7 +33,46 @@ class ESRASRGANModel(SRGANModel):
             p.requires_grad = False
 
         self.optimizer_g.zero_grad()
-        self.output = self.net_g(self.lq, xyz_hr)
+        output = self.net_g(self.lq, xyz_hr)
+        self.output = output[0]
+        feature_map = output[1]
+        if current_iter == 100:
+
+            fig, axes = plt.subplots(2, 2, figsize=(10, 5))
+            sr_clone = self.output[0, 0, :, :, d // 2].clone().detach().cpu().numpy()
+            hr_clone = self.gt[0, 0, :, :, d // 2].clone().detach().cpu().numpy()
+            d_lr = self.lq.shape[-1] // 2
+            lr_clone = self.lq[0, 0, :, :, d_lr].clone().detach().cpu().numpy()
+            minimum = min(sr_clone.min(), hr_clone.min(), lr_clone.min())
+            maximum = max(sr_clone.max(), hr_clone.max(), lr_clone.max())
+            axes[0, 0].imshow(hr_clone, vmin=minimum, vmax=maximum)
+            axes[0, 0].set_title('HR')
+            axes[0, 1].imshow(lr_clone, vmin=minimum, vmax=maximum)
+            axes[0, 1].set_title('LR')
+            axes[1, 0].imshow(sr_clone, vmin=minimum, vmax=maximum)
+            axes[1, 0].set_title('SR')
+            bins = np.linspace(minimum, maximum, 100)
+            n, bins, edges = axes[1, 1].hist(hr_clone.flatten(), bins=bins, alpha=0.5, label='HR', density=True)
+            axes[1, 1].hist(sr_clone.flatten(), bins=bins, alpha=0.5, label='SR', density=True)
+            axes[1, 1].hist(lr_clone.flatten(), bins=bins, alpha=0.5, label='LR', density=True)
+            axes[1, 1].set_xlabel(r'$T_{{21}}$')
+            axes[1, 1].legend()
+            axes[1, 1].set_ylim(0, max(n) * 1.1)
+            save_img_path = osp.join(self.opt['path']['visualization'], f'input_output_{current_iter}.png')
+            plt.savefig(save_img_path, bbox_inches='tight')
+            plt.close(fig)
+
+            fig, axes = plt.subplots(feature_map.shape[1], 2, figsize=(5, feature_map.shape[1] * 5), width_ratios=[1, 0.1])
+            for i in range(feature_map.shape[1]):
+                fb, fc, fh, fw, fd = feature_map.shape
+                feature_map_clone = feature_map[0, i, :, :, fd // 2].clone().detach().cpu().numpy()
+                im = axes[i, 0].imshow(feature_map_clone)
+                axes[i, 0].set_title(f'Feature map {i}')
+                fig.colorbar(im, cax=axes[i, 1], orientation='vertical')
+
+            save_img_path = osp.join(self.opt['path']['visualization'], f'feature_map_{current_iter}.png')
+            plt.savefig(save_img_path, bbox_inches='tight')
+            plt.close(fig)
 
         l_g_total = 0
         loss_dict = OrderedDict()
@@ -47,47 +92,54 @@ class ESRASRGANModel(SRGANModel):
                     l_g_total += l_g_style
                     loss_dict['l_g_style'] = l_g_style
             # gan loss (relativistic gan)
-            real_d_pred = self.net_d(self.gt).detach()
-            fake_g_pred = self.net_d(self.output)
-            l_g_real = self.cri_gan(real_d_pred - torch.mean(fake_g_pred), False, is_disc=False)
-            l_g_fake = self.cri_gan(fake_g_pred - torch.mean(real_d_pred), True, is_disc=False)
-            l_g_gan = (l_g_real + l_g_fake) / 2
+            if False:
+                real_d_pred = self.net_d(self.gt).detach()
+                fake_g_pred = self.net_d(self.output)
+                l_g_real = self.cri_gan(real_d_pred - torch.mean(fake_g_pred), False, is_disc=False)
+                l_g_fake = self.cri_gan(fake_g_pred - torch.mean(real_d_pred), True, is_disc=False)
+                l_g_gan = (l_g_real + l_g_fake) / 2
 
-            l_g_total += l_g_gan
-            loss_dict['l_g_gan'] = l_g_gan
+                l_g_total += l_g_gan
+                loss_dict['l_g_gan'] = l_g_gan
 
             l_g_total.backward()
             self.optimizer_g.step()
 
         # optimize net_d
-        for p in self.net_d.parameters():
-            p.requires_grad = True
+        if (current_iter % self.net_g_iters == 0 and current_iter > self.net_g_init_iters):
+            for p in self.net_d.parameters():
+                p.requires_grad = True
 
-        self.optimizer_d.zero_grad()
-        # gan loss (relativistic gan)
+            self.optimizer_d.zero_grad()
+            # gan loss (relativistic gan)
 
-        # In order to avoid the error in distributed training:
-        # "Error detected in CudnnBatchNormBackward: RuntimeError: one of
-        # the variables needed for gradient computation has been modified by
-        # an inplace operation",
-        # we separate the backwards for real and fake, and also detach the
-        # tensor for calculating mean.
+            # In order to avoid the error in distributed training:
+            # "Error detected in CudnnBatchNormBackward: RuntimeError: one of
+            # the variables needed for gradient computation has been modified by
+            # an inplace operation",
+            # we separate the backwards for real and fake, and also detach the
+            # tensor for calculating mean.
 
-        # real
-        fake_d_pred = self.net_d(self.output).detach()
-        real_d_pred = self.net_d(self.gt)
-        l_d_real = self.cri_gan(real_d_pred - torch.mean(fake_d_pred), True, is_disc=True) * 0.5
-        l_d_real.backward()
-        # fake
-        fake_d_pred = self.net_d(self.output.detach())
-        l_d_fake = self.cri_gan(fake_d_pred - torch.mean(real_d_pred.detach()), False, is_disc=True) * 0.5
-        l_d_fake.backward()
-        self.optimizer_d.step()
+            # real
+            fake_d_pred = self.net_d(self.output).detach()
+            real_d_pred = self.net_d(self.gt)
+            l_d_real = self.cri_gan(real_d_pred - torch.mean(fake_d_pred), True, is_disc=True) * 0.5
+            l_d_real.backward()
+            # fake
+            fake_d_pred = self.net_d(self.output.detach())
+            l_d_fake = self.cri_gan(fake_d_pred - torch.mean(real_d_pred.detach()), False, is_disc=True) * 0.5
+            l_d_fake.backward()
+            self.optimizer_d.step()
 
-        loss_dict['l_d_real'] = l_d_real
-        loss_dict['l_d_fake'] = l_d_fake
-        loss_dict['out_d_real'] = torch.mean(real_d_pred.detach())
-        loss_dict['out_d_fake'] = torch.mean(fake_d_pred.detach())
+            loss_dict['l_d_real'] = l_d_real
+            loss_dict['l_d_fake'] = l_d_fake
+            loss_dict['out_d_real'] = torch.mean(real_d_pred.detach())
+            loss_dict['out_d_fake'] = torch.mean(fake_d_pred.detach())
+        # else:
+        #    loss_dict['l_d_real'] = torch.tensor(0.0, device=self.device)
+        #    loss_dict['l_d_fake'] = torch.tensor(0.0, device=self.device)
+        #    loss_dict['out_d_real'] = torch.tensor(0.0, device=self.device)
+        #    loss_dict['out_d_fake'] = torch.tensor(0.0, device=self.device)
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
 
@@ -232,25 +284,34 @@ class ESRASRGANModel(SRGANModel):
             with torch.no_grad():
                 if isinstance(self.lq, torch.Tensor):
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
-                        self.output = self.net_g_ema(self.lq, xyz_hr)
+                        output = self.net_g_ema(self.lq, xyz_hr)
+                        self.output = output[0]
+                        # feature_map = output[1]
                 elif isinstance(self.lq, list):
                     # tqdm loop verbose argument
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
                         self.output = []
                         for lq in tqdm(self.lq, total=len(self.lq), disable=not self.opt['val'].get('pbar', False), desc='testing scales'):
-                            self.output.append(self.net_g_ema(lq, xyz_hr))
+                            output = self.net_g_ema(lq, xyz_hr)
+                            self.output.append(output[0])
+                            # feature_map = output[1]
+                            # self.output.append(self.net_g_ema(lq, xyz_hr))
         else:
             self.net_g.eval()
             with torch.no_grad():
                 if isinstance(self.lq, torch.Tensor):
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
-                        self.output = self.net_g(self.lq, xyz_hr)
+                        output = self.net_g(self.lq, xyz_hr)
+                        self.output = output[0]
+                        # feature_map = output[1]
                 elif isinstance(self.lq, list):
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
 
                         self.output = []
                         for lq in tqdm(self.lq, total=len(self.lq), disable=not self.opt['val'].get('pbar', False), desc='testing scales'):
-                            self.output.append(self.net_g(lq, xyz_hr))
+                            output = self.net_g(lq, xyz_hr)
+                            self.output.append(output[0])
+                            # feature_map = output[1]
             self.net_g.train()
 
     def feed_data(self, data):

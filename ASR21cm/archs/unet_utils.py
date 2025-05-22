@@ -3,14 +3,18 @@ import torch
 
 
 def weight_init(shape, mode, fan_in, fan_out):
-    if mode == 'xavier_uniform': return np.sqrt(6 / (fan_in + fan_out)) * (torch.rand(*shape) * 2 - 1)
-    if mode == 'xavier_normal': return np.sqrt(2 / (fan_in + fan_out)) * torch.randn(*shape)
-    if mode == 'kaiming_uniform': return np.sqrt(3 / fan_in) * (torch.rand(*shape) * 2 - 1)
-    if mode == 'kaiming_normal': return np.sqrt(1 / fan_in) * torch.randn(*shape)
+    if mode == 'xavier_uniform':
+        return np.sqrt(6 / (fan_in + fan_out)) * (torch.rand(*shape) * 2 - 1)
+    if mode == 'xavier_normal':
+        return np.sqrt(2 / (fan_in + fan_out)) * torch.randn(*shape)
+    if mode == 'kaiming_uniform':
+        return np.sqrt(3 / fan_in) * (torch.rand(*shape) * 2 - 1)
+    if mode == 'kaiming_normal':
+        return np.sqrt(1 / fan_in) * torch.randn(*shape)
     raise ValueError(f'Invalid init mode "{mode}"')
 
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Fully-connected layer.
 
 
@@ -31,7 +35,7 @@ class Linear(torch.nn.Module):
         return x
 
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Convolutional layer with optional up/downsampling.
 
 
@@ -117,7 +121,7 @@ class Conv3d(torch.nn.Module):
         self.weight = torch.nn.Parameter(weight_init([out_channels, in_channels, kernel, kernel, kernel], **init_kwargs) * init_weight) if kernel else None
         self.bias = torch.nn.Parameter(weight_init([out_channels], **init_kwargs) * init_bias) if kernel and bias else None
         f = torch.ones(1, 1, 2, 2, 2)  # torch.as_tensor(resample_filter, dtype=torch.float32)
-        #f = f.ger(f).unsqueeze(0).unsqueeze(1) / f.sum().square()
+        # f = f.ger(f).unsqueeze(0).unsqueeze(1) / f.sum().square()
         f = f / f.sum()
         self.register_buffer('resample_filter', f if up or down else None)
 
@@ -128,7 +132,7 @@ class Conv3d(torch.nn.Module):
         w_pad = w.shape[-1] // 2 if w is not None else 0
         f_pad = (f.shape[-1] - 1) // 2 if f is not None else 0
 
-        odd_pad = 0  #x.shape[-1] % 2
+        odd_pad = 0
         if self.fused_resample and self.up and w is not None:
             x = torch.nn.functional.conv_transpose3d(x, f.mul(8).tile([self.in_channels, 1, 1, 1, 1]), groups=self.in_channels, stride=2, padding=max(f_pad - w_pad, 0) + odd_pad)
             x = torch.nn.functional.conv3d(x, w, padding=max(w_pad - f_pad, 0))
@@ -147,7 +151,7 @@ class Conv3d(torch.nn.Module):
         return x
 
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Group normalization.
 
 
@@ -165,7 +169,7 @@ class GroupNorm(torch.nn.Module):
         return x
 
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Attention weight computation, i.e., softmax(Q^T * K).
 # Performs all computation using FP32, but uses the original datatype for
 # inputs/outputs/gradients to conserve memory.
@@ -188,7 +192,7 @@ class AttentionOp(torch.autograd.Function):
         return dq, dk
 
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Unified U-Net block with optional up/downsampling and self-attention.
 # Represents the union of all features employed by the DDPM++, NCSN++, and
 # ADM architectures.
@@ -265,16 +269,16 @@ class UNetBlock(torch.nn.Module):
 
         if self.num_heads:
             q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1).unbind(2)
-            #w = AttentionOp.apply(q, k)
-            #a = torch.einsum('nqk,nck->ncq', w, v)
-            #x = self.proj(a.reshape(*x.shape)).add_(x)
+            # w = AttentionOp.apply(q, k)
+            # a = torch.einsum('nqk,nck->ncq', w, v)
+            # x = self.proj(a.reshape(*x.shape)).add_(x)
             x = torch.nn.functional.scaled_dot_product_attention(q, k, v).reshape(*x.shape)
             x = self.proj(x).add_(x)
             x = x * self.skip_scale
         return x
 
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Timestep embedding used in the DDPM++ and ADM architectures.
 
 
@@ -295,7 +299,7 @@ class PositionalEmbedding(torch.nn.Module):
         return x
 
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # Timestep embedding used in the NCSN++ architecture.
 
 
@@ -468,14 +472,14 @@ class SongUNet(torch.nn.Module):
         else:
             emb = None
 
-        #skips = []
+        # skips = []
         # Encoder.
-        #x_skips = torch.utils.checkpoint.checkpoint(self.encoder_forward, x, emb, skips, use_reentrant=False) if False else self.encoder_forward(x, emb, skips)
-        #x, skips = x_skips
+        # x_skips = torch.utils.checkpoint.checkpoint(self.encoder_forward, x, emb, skips, use_reentrant=False) if False else self.encoder_forward(x, emb, skips)
+        # x, skips = x_skips
 
         # Decoder.
-        #x_aux = torch.utils.checkpoint.checkpoint(self.decoder_forward, x, emb, skips[:], use_reentrant=False) if False else self.decoder_forward(x, emb, skips)
-        #x, aux = x_aux
+        # x_aux = torch.utils.checkpoint.checkpoint(self.decoder_forward, x, emb, skips[:], use_reentrant=False) if False else self.decoder_forward(x, emb, skips)
+        # x, aux = x_aux
 
         # Encoder.
         skips = []
@@ -547,12 +551,12 @@ if __name__ == '__main__':
     )
 
     with torch.no_grad():
-        #dim = 256 # int(512//1.1)
+        # dim = 256 # int(512//1.1)
         for dim in range(16, 64):
             test_img = torch.randn(1, 1, dim, dim, dim)
             try:
                 out = net(x=test_img, noise_labels=None, class_labels=None, augment_labels=None, verbose=False)
                 outdim = out.shape[2]
-                print(f'out shape: {out.shape} dim: {dim} outdim: {outdim}, {dim==outdim}', flush=True)
-            except Exception as e:
+                print(f'out shape: {out.shape} dim: {dim} outdim: {outdim}, {dim == outdim}', flush=True)
+            except Exception:
                 assert False

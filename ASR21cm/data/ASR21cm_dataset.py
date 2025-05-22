@@ -2,7 +2,6 @@ import numpy as np
 import os
 import pandas as pd
 import SR21cm.utils as utils
-import time
 import torch
 from functools import partial
 from scipy.io import loadmat
@@ -48,7 +47,6 @@ class Custom21cmDataset(torch.utils.data.Dataset):
         self.scale_max = opt['scale_max']
         self.scale_min = opt['scale_min']
         self.n_augment = opt['n_augment']
-        #self.one_box = opt['one_box']
         self.gt_size = opt['gt_size']
         self.conditional_cubes = opt.get('conditional_cubes', False)
 
@@ -58,7 +56,6 @@ class Custom21cmDataset(torch.utils.data.Dataset):
     @torch.no_grad()
     def __getitem__(self, idx):
         assert hasattr(self, 'df'), 'DataFrame not found. Please run getDataFrame() first.'
-        start_time = time.time()
         T21 = self.dataset.tensors[0][idx]
         delta = self.dataset.tensors[1][idx]
         vbv = self.dataset.tensors[2][idx]
@@ -140,19 +137,19 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
 
     T21, delta, vbv, labels = zip(*batch)
     T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
-    #T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
+    # T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
 
     if conditional_cubes:
         delta = torch.concatenate(delta, dim=0).unsqueeze(1)
-        #delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
+        # delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
         vbv = torch.concatenate(vbv, dim=0).unsqueeze(1)
-        #vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
+        # vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
         cubes = torch.cat([T21, delta, vbv], dim=1)
         cubes = random_spatial_crop(cubes, crop_size=gt_size)
         T21, T21_lr, delta, vbv = cubes.split([1, 1, 1, 1], dim=1)
     else:
         T21 = random_spatial_crop(T21, crop_size=gt_size)
-        #cubes = random_spatial_crop(cubes, crop_size=64)
+        # cubes = random_spatial_crop(cubes, crop_size=64)
 
     labels = torch.concatenate(labels, dim=0)
     b, label_dim = labels.shape
@@ -170,10 +167,10 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         random_idx = torch.randint(low=0, high=available_sizes.shape[0], size=(1, ))
         h_lr = available_sizes[random_idx][0].item()
 
-        #h_lr = np.random.randint(size_min, size_max, size=1)[0]
+        # h_lr = np.random.randint(size_min, size_max, size=1)[0]
         scale_factor = torch.full((b, 1, 1, 1, 1), h / h_lr)
         T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
-        #T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
+        # T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
         T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
         T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
         T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
@@ -185,7 +182,6 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
 
         conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     elif phase == 'val':
-        #test fixed h_lr
         if h_lr is None:
             h_lr = [h // i for i in range(2, 5)]
         elif isinstance(h_lr, int):
@@ -211,7 +207,7 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     else:
         raise ValueError(f'Unknown phase: {phase}')
-    #return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
+    # return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
     return dict(lq=T21_lr, gt=T21, delta=delta, vbv=vbv, labels=labels, T21_lr_mean=T21_lr_mean, T21_lr_std=T21_lr_std, scale_factor=scale_factor, **conditional_cubes)
 
 

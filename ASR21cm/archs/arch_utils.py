@@ -13,9 +13,9 @@ from typing import Callable
 try:
     from mamba_ssm.ops.selective_scan_interface import selective_scan_fn  # selective_scan_ref
     test_mode = False
-except Exception as e:
-    print(e)
-    print('Selective scan not available, using reference implementation and enabling test mode')
+except Exception:
+    # print(e)
+    # print('Selective scan not available, using reference implementation and enabling test mode')
     test_mode = True
     selective_scan_fn = None
 
@@ -1276,31 +1276,40 @@ class MLP_decoder(nn.Module):
         activation = getattr(nn, activation)
         for i in range(depth):
             if i == 0:
+                stage_one.append(nn.LayerNorm(latent_dim))
                 stage_one.append(nn.Linear(latent_dim, width))
-                stage_two.append(nn.Linear(latent_dim, width))
                 stage_one.append(activation())
+
+                stage_two.append(nn.LayerNorm(latent_dim))
+                stage_two.append(nn.Linear(latent_dim, width))
                 stage_two.append(activation())
             elif i == depth - 1:
                 stage_one.append(nn.Linear(width, latent_dim))
                 stage_two.append(nn.Linear(width, out_dim))
             else:
+                stage_one.append(nn.LayerNorm(width))
                 stage_one.append(nn.Linear(width, width))
-                stage_two.append(nn.Linear(width, width))
                 stage_one.append(activation())
+
+                stage_two.append(nn.LayerNorm(width))
+                stage_two.append(nn.Linear(width, width))
                 stage_two.append(activation())
 
         self.stage_one = nn.Sequential(*stage_one)
         self.stage_two = nn.Sequential(*stage_two)
 
     def forward(self, x):
-        if self.chunk:
-            x_chunks = x.chunk(8, dim=0)
-            h_chunks = [torch.utils.checkpoint.checkpoint(self.stage_one, x_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_one(x_chunk) for x_chunk in x_chunks]
-            output_chunks = [torch.utils.checkpoint.checkpoint(self.stage_two, x_chunk + h_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_two(x_chunk + h_chunk) for x_chunk, h_chunk in zip(x_chunks, h_chunks)]
-            output = torch.cat(output_chunks, dim=0)
-        else:
-            h = torch.utils.checkpoint.checkpoint(self.stage_one, x, use_reentrant=False) if self.use_checkpoint else self.stage_one(x)
-            output = torch.utils.checkpoint.checkpoint(self.stage_two, x + h, use_reentrant=False) if self.use_checkpoint else self.stage_two(x + h)
+        h = self.stage_one(x)
+        output = self.stage_two(x + h)
+        if False:
+            if self.chunk:
+                x_chunks = x.chunk(8, dim=0)
+                h_chunks = [torch.utils.checkpoint.checkpoint(self.stage_one, x_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_one(x_chunk) for x_chunk in x_chunks]
+                output_chunks = [torch.utils.checkpoint.checkpoint(self.stage_two, x_chunk + h_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_two(x_chunk + h_chunk) for x_chunk, h_chunk in zip(x_chunks, h_chunks)]
+                output = torch.cat(output_chunks, dim=0)
+            else:
+                h = torch.utils.checkpoint.checkpoint(self.stage_one, x, use_reentrant=False) if self.use_checkpoint else self.stage_one(x)
+                output = torch.utils.checkpoint.checkpoint(self.stage_two, x + h, use_reentrant=False) if self.use_checkpoint else self.stage_two(x + h)
         return output
 
 
