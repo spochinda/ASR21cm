@@ -1274,7 +1274,7 @@ class MLP_decoder(nn.Module):
         stage_one = []
         stage_two = []
         activation = getattr(nn, activation)
-        self.norm = nn.LayerNorm(latent_dim)
+        self.norm = nn.Identity()  # nn.LayerNorm(latent_dim)
 
         for i in range(depth):
             if i == 0:
@@ -1297,15 +1297,18 @@ class MLP_decoder(nn.Module):
                 stage_two.append(nn.Linear(width, width))
                 stage_two.append(activation())
 
-        gain = nn.init.calculate_gain('leaky_relu', 0.2)
-        for layer in stage_one:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight, gain=gain)
-                nn.init.zeros_(layer.bias)
-        for layer in stage_two:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight, gain=gain)
-                nn.init.zeros_(layer.bias)
+        if True:
+            # gain = nn.init.calculate_gain('leaky_relu', 0.2)
+            for layer in stage_one:
+                if isinstance(layer, nn.Linear):
+                    # nn.init.xavier_uniform_(layer.weight, gain=gain)
+                    nn.init.kaiming_normal_(layer.weight, a=0.2, mode='fan_in', nonlinearity='leaky_relu')
+                    nn.init.zeros_(layer.bias)
+            for layer in stage_two:
+                if isinstance(layer, nn.Linear):
+                    # nn.init.xavier_uniform_(layer.weight, gain=gain)
+                    nn.init.kaiming_normal_(layer.weight, a=0.2, mode='fan_in', nonlinearity='leaky_relu')
+                    nn.init.zeros_(layer.bias)
 
         self.stage_one = nn.Sequential(*stage_one)
         self.stage_two = nn.Sequential(*stage_two)
@@ -1455,6 +1458,18 @@ class RDB(nn.Module):
         return x + lff  # local residual learning
 
 
+class FeatureAffine(nn.Module):
+
+    def __init__(self, num_features):
+        super().__init__()
+        self.num_features = num_features
+        self.weight = nn.Parameter(torch.ones(1, num_features, 1, 1, 1))
+        self.bias = nn.Parameter(torch.zeros(1, num_features, 1, 1, 1))
+
+    def forward(self, x):
+        return x * self.weight + self.bias
+
+
 class RDN(nn.Module):
 
     def __init__(self, latent_dim=16, num_features=16, growth_rate=16, num_blocks=8, num_layers=3, **kwargs):
@@ -1475,6 +1490,8 @@ class RDN(nn.Module):
         # global feature fusion
         self.gff = nn.Sequential(nn.Conv3d(self.G * self.D, self.G0, kernel_size=1), nn.Conv3d(self.G0, self.G0, kernel_size=3, padding=3 // 2))
         self.output = nn.Conv3d(self.G0, latent_dim, kernel_size=3, padding=3 // 2)
+
+        self.affine = FeatureAffine(latent_dim)
 
     def forward(self, x):
         # print(f"1: shape: {x.shape}")
@@ -1497,6 +1514,8 @@ class RDN(nn.Module):
         # print(f"8: shape: {x.shape}")
         x = self.output(x)
         # print(f"9: shape: {x.shape}")
+        # print(f"10: shape: {x.shape}, affine: {self.affine.num_features}", flush=True)
+        x = self.affine(x)
         return x
 
 

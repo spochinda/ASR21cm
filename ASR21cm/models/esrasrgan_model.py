@@ -7,6 +7,7 @@ from SR21cm.utils import calculate_power_spectrum
 from tqdm import tqdm
 
 from ASR21cm.archs.arch_utils import make_coord
+from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
 from basicsr.models.srgan_model import SRGANModel
 from basicsr.utils.registry import MODEL_REGISTRY
@@ -22,11 +23,15 @@ class ESRASRGANModel(SRGANModel):
         self.net_g_iters = self.opt['train'].get('net_g_iters', 1)
         self.net_g_init_iters = self.opt['train'].get('net_g_init_iters', 0)
 
+        train_opt = self.opt['train']
+        if train_opt.get('dsq_opt'):
+            self.cri_dsq = build_loss(train_opt['dsq_opt']).to(self.device)
+
     def optimize_parameters(self, current_iter):
         # optimize net_g
         b, c, h, w, d = self.gt.shape
-        xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)
-        xyz_hr = xyz_hr.view(1, -1, 3)
+        xyz_hr = make_coord([h, h, h], ranges=None, flatten=True)
+        xyz_hr = xyz_hr.view(1, -1, 3).float()
         xyz_hr = xyz_hr.repeat(b, 1, 1)
 
         for p in self.net_d.parameters():
@@ -36,7 +41,7 @@ class ESRASRGANModel(SRGANModel):
         output = self.net_g(self.lq, xyz_hr)
         self.output = output[0]
         feature_map = output[1]
-        if False:  # True:  # current_iter == 100:
+        if True:  # current_iter == 100:
 
             fig, axes = plt.subplots(2, 2, figsize=(10, 5))
             sr_clone = self.output[0, 0, :, :, d // 2].clone().detach().cpu().numpy()
@@ -62,13 +67,22 @@ class ESRASRGANModel(SRGANModel):
             plt.savefig(save_img_path, bbox_inches='tight')
             plt.close(fig)
 
-            fig, axes = plt.subplots(feature_map.shape[1], 2, figsize=(5, feature_map.shape[1] * 5), width_ratios=[1, 0.1])
+            fig, axes = plt.subplots(
+                feature_map.shape[1],
+                3,
+                figsize=(5 * 2, feature_map.shape[1] * 5),
+                width_ratios=[1, 1, 0.1],
+                sharex='col',
+            )
             for i in range(feature_map.shape[1]):
                 fb, fc, fh, fw, fd = feature_map.shape
                 feature_map_clone = feature_map[0, i, :, :, fd // 2].clone().detach().cpu().numpy()
-                im = axes[i, 0].imshow(feature_map_clone)
-                axes[i, 0].set_title(f'Feature map {i}')
-                fig.colorbar(im, cax=axes[i, 1], orientation='vertical')
+                im = axes[i, 1].imshow(feature_map_clone)
+                axes[i, 1].set_title(f'Feature map {i}')
+                fig.colorbar(im, cax=axes[i, 2], orientation='vertical')
+                axes[i, 0].hist(feature_map_clone.flatten(), bins=100, density=True)
+                axes[i, 0].set_xlabel('Feature map value')
+                axes[i, 0].set_ylabel('Density')
 
             save_img_path = osp.join(self.opt['path']['visualization'], f'feature_map_{current_iter}.png')
             plt.savefig(save_img_path, bbox_inches='tight')
@@ -91,6 +105,12 @@ class ESRASRGANModel(SRGANModel):
                 if l_g_style is not None:
                     l_g_total += l_g_style
                     loss_dict['l_g_style'] = l_g_style
+            # dsq loss
+            if self.cri_dsq:
+                l_g_dsq = self.cri_dsq(self.output, self.gt)
+                l_g_total += l_g_dsq
+                loss_dict['l_g_dsq'] = l_g_dsq
+
             # gan loss (relativistic gan)
             real_d_pred = self.net_d(self.gt).detach()
             fake_g_pred = self.net_d(self.output)

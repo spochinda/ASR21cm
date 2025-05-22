@@ -28,5 +28,5 @@ class dsq_loss(nn.Module):
         k_sr, dsq_sr = calculate_power_spectrum(data_x=pred, Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
         log10dsq_hr = torch.log10(dsq_hr)
         log10dsq_sr = torch.log10(dsq_sr)
-        loss = (log10dsq_hr - log10dsq_sr).abs().nanmean()
+        loss = (log10dsq_hr - log10dsq_sr).abs().nanmean().squeeze()
         return self.loss_weight * loss

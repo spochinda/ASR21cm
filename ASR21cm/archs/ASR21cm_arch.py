@@ -56,17 +56,14 @@ class ArSSR(nn.Module):
         # feature_map = torch.utils.checkpoint.checkpoint(self.encoder, img_lr, use_reentrant=False)
 
         # generate feature vector for coordinate through trilinear interpolation (Equ. 4 & Fig. 3).
-        coords = xyz_hr.flip(-1)
-        coords = coords.unsqueeze(1).unsqueeze(1)
-        feature_vector = nn.functional.grid_sample(feature_map, coords, mode='bilinear', align_corners=False)
+        feature_vector = nn.functional.grid_sample(feature_map, xyz_hr.flip(-1).unsqueeze(1).unsqueeze(1), mode='bilinear', align_corners=False)
         feature_vector = feature_vector[:, :, 0, 0, :].permute(0, 2, 1)
         # concatenate coordinate with feature vector
         feature_vector_and_xyz_hr = torch.cat([feature_vector, xyz_hr], dim=-1)  # N×K×(3+feature_dim)
         # estimate the voxel intensity at the coordinate by using decoder.
         N, K = xyz_hr.shape[:2]
-        feature_vector_and_xyz_hr = feature_vector_and_xyz_hr.view(N * K, -1)
-        img_sr = self.decoder(feature_vector_and_xyz_hr).view(N, K, -1)
-
+        img_sr = self.decoder(feature_vector_and_xyz_hr.view(N * K, -1)).view(N, K, -1)  # N×K×1
+        img_sr = img_sr.permute(0, 2, 1)  # N×1×K
         h = w = d = int(round(K**(1 / 3)))
         img_sr = img_sr.view(N, 1, h, w, d)
         return img_sr, feature_map
