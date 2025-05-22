@@ -10,10 +10,10 @@ datasets:
   train:
     name: T21train
     type: Custom21cmDataset
-    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/T21_cubes/
-    dataroot_IC: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/IC_cubes/
+    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes/
+    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes/
     redshifts: [10,]
-    IC_seeds: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39]
+    IC_seeds: [0,]
     Npix: 256
     cut_factor: 2
     scale_max: 4.
@@ -33,10 +33,10 @@ datasets:
   val:
     name: T21val
     type: Custom21cmDataset
-    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/T21_cubes
-    dataroot_IC: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/IC_cubes
+    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes
+    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes
     redshifts: [10,]
-    IC_seeds: [41,42,43,44]
+    IC_seeds: [1,]
     Npix: 256
     cut_factor: 0
     scale_max: 4.
@@ -111,7 +111,7 @@ train:
 
   # losses
   pixel_opt:
-    type: L1Loss
+    type: MSELoss # L1Loss
     loss_weight: !!float 1e-2
     reduction: mean
 #  perceptual_opt:
@@ -129,9 +129,12 @@ train:
     gan_type: vanilla
     real_label_val: 1.0
     fake_label_val: 0.0
-    loss_weight: !!float 5e-3
+    loss_weight: !!float 1e-2 # 5e-3
+  dsq_opt:
+    type: dsq_loss
+    loss_weight: !!float 1e-2
 
-  net_d_iters: 2
+  net_d_iters: 1
   net_d_init_iters: 0
   net_g_iters: 1
   net_g_init_iters: 0
