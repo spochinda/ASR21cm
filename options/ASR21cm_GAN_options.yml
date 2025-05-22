@@ -92,7 +92,7 @@ train:
   ema_decay: 0.999
   optim_g:
     type: Adam
-    lr: !!float 1e-2 # 1e-4
+    lr: !!float 1e-4 # 1e-4
     weight_decay: 0
     betas: [0.9, 0.99]
   optim_d:
@@ -133,7 +133,7 @@ train:
 
   net_d_iters: 1
   net_d_init_iters: 0
-  net_g_iters: 100
+  net_g_iters: 1
   net_g_init_iters: 0
 
 # validation settings

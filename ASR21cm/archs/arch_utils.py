@@ -1295,6 +1295,17 @@ class MLP_decoder(nn.Module):
                 stage_two.append(nn.Linear(width, width))
                 stage_two.append(activation())
 
+        gain = nn.init.calculate_gain('leaky_relu', 0.2)
+        print('gain:', gain, flush=True)
+        for layer in stage_one:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight, gain=gain)
+                nn.init.zeros_(layer.bias)
+        for layer in stage_two:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight, gain=gain)
+                nn.init.zeros_(layer.bias)
+
         self.stage_one = nn.Sequential(*stage_one)
         self.stage_two = nn.Sequential(*stage_two)
 

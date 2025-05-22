@@ -36,7 +36,7 @@ class ESRASRGANModel(SRGANModel):
         output = self.net_g(self.lq, xyz_hr)
         self.output = output[0]
         feature_map = output[1]
-        if current_iter == 100:
+        if False:  # True:  # current_iter == 100:
 
             fig, axes = plt.subplots(2, 2, figsize=(10, 5))
             sr_clone = self.output[0, 0, :, :, d // 2].clone().detach().cpu().numpy()
@@ -92,15 +92,14 @@ class ESRASRGANModel(SRGANModel):
                     l_g_total += l_g_style
                     loss_dict['l_g_style'] = l_g_style
             # gan loss (relativistic gan)
-            if False:
-                real_d_pred = self.net_d(self.gt).detach()
-                fake_g_pred = self.net_d(self.output)
-                l_g_real = self.cri_gan(real_d_pred - torch.mean(fake_g_pred), False, is_disc=False)
-                l_g_fake = self.cri_gan(fake_g_pred - torch.mean(real_d_pred), True, is_disc=False)
-                l_g_gan = (l_g_real + l_g_fake) / 2
+            real_d_pred = self.net_d(self.gt).detach()
+            fake_g_pred = self.net_d(self.output)
+            l_g_real = self.cri_gan(real_d_pred - torch.mean(fake_g_pred), False, is_disc=False)
+            l_g_fake = self.cri_gan(fake_g_pred - torch.mean(real_d_pred), True, is_disc=False)
+            l_g_gan = (l_g_real + l_g_fake) / 2
 
-                l_g_total += l_g_gan
-                loss_dict['l_g_gan'] = l_g_gan
+            l_g_total += l_g_gan
+            loss_dict['l_g_gan'] = l_g_gan
 
             l_g_total.backward()
             self.optimizer_g.step()
