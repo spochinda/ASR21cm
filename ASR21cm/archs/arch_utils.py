@@ -1274,29 +1274,30 @@ class MLP_decoder(nn.Module):
         stage_one = []
         stage_two = []
         activation = getattr(nn, activation)
+        self.norm = nn.LayerNorm(latent_dim)
+
         for i in range(depth):
             if i == 0:
-                stage_one.append(nn.LayerNorm(latent_dim))
+                # stage_one.append(nn.LayerNorm(latent_dim))
                 stage_one.append(nn.Linear(latent_dim, width))
                 stage_one.append(activation())
 
-                stage_two.append(nn.LayerNorm(latent_dim))
+                # stage_two.append(nn.LayerNorm(latent_dim))
                 stage_two.append(nn.Linear(latent_dim, width))
                 stage_two.append(activation())
             elif i == depth - 1:
                 stage_one.append(nn.Linear(width, latent_dim))
                 stage_two.append(nn.Linear(width, out_dim))
             else:
-                stage_one.append(nn.LayerNorm(width))
+                # stage_one.append(nn.LayerNorm(width))
                 stage_one.append(nn.Linear(width, width))
                 stage_one.append(activation())
 
-                stage_two.append(nn.LayerNorm(width))
+                # stage_two.append(nn.LayerNorm(width))
                 stage_two.append(nn.Linear(width, width))
                 stage_two.append(activation())
 
         gain = nn.init.calculate_gain('leaky_relu', 0.2)
-        print('gain:', gain, flush=True)
         for layer in stage_one:
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_uniform_(layer.weight, gain=gain)
@@ -1310,6 +1311,7 @@ class MLP_decoder(nn.Module):
         self.stage_two = nn.Sequential(*stage_two)
 
     def forward(self, x):
+        x = self.norm(x)
         h = self.stage_one(x)
         output = self.stage_two(x + h)
         if False:
