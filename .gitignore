@@ -4,6 +4,7 @@ results/*
 tb_logger/*
 wandb/*
 tmp/*
+good_experiments/*
 
 *.DS_Store
 # Slurm job output files and submission scripts

@@ -19,13 +19,19 @@ class ESRASRGANModel(SRGANModel):
 
     def init_training_settings(self):
         super(ESRASRGANModel, self).init_training_settings()
-
-        self.net_g_iters = self.opt['train'].get('net_g_iters', 1)
-        self.net_g_init_iters = self.opt['train'].get('net_g_init_iters', 0)
-
         train_opt = self.opt['train']
+
+        self.net_g_iters = train_opt.get('net_g_iters', 1)
+        self.net_g_init_iters = train_opt.get('net_g_init_iters', 0)
+
+        # dsq loss
         if train_opt.get('dsq_opt'):
             self.cri_dsq = build_loss(train_opt['dsq_opt']).to(self.device)
+        else:
+            self.cri_dsq = None
+
+        assert self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) == self.opt['network_d'].get('redshift_embedding', False), \
+            'Redshift embedding should be the same for both generator and discriminator.'
 
     def optimize_parameters(self, current_iter):
         # optimize net_g
@@ -38,10 +44,17 @@ class ESRASRGANModel(SRGANModel):
             p.requires_grad = False
 
         self.optimizer_g.zero_grad()
-        output = self.net_g(self.lq, xyz_hr)
+
+        kwargs = {'z': self.z} if self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) else {}
+        if hasattr(self, 'delta'):
+            kwargs['delta'] = self.delta
+        if hasattr(self, 'vbv'):
+            kwargs['vbv'] = self.vbv
+
+        output = self.net_g(self.lq, xyz_hr, **kwargs)
         self.output = output[0]
         feature_map = output[1]
-        if True:  # current_iter == 100:
+        if False:  # current_iter == 100:
 
             fig, axes = plt.subplots(2, 2, figsize=(10, 5))
             sr_clone = self.output[0, 0, :, :, d // 2].clone().detach().cpu().numpy()
@@ -112,8 +125,8 @@ class ESRASRGANModel(SRGANModel):
                 loss_dict['l_g_dsq'] = l_g_dsq
 
             # gan loss (relativistic gan)
-            real_d_pred = self.net_d(self.gt).detach()
-            fake_g_pred = self.net_d(self.output)
+            real_d_pred = self.net_d(self.gt, **kwargs).detach()
+            fake_g_pred = self.net_d(self.output, **kwargs)
             l_g_real = self.cri_gan(real_d_pred - torch.mean(fake_g_pred), False, is_disc=False)
             l_g_fake = self.cri_gan(fake_g_pred - torch.mean(real_d_pred), True, is_disc=False)
             l_g_gan = (l_g_real + l_g_fake) / 2
@@ -140,12 +153,12 @@ class ESRASRGANModel(SRGANModel):
             # tensor for calculating mean.
 
             # real
-            fake_d_pred = self.net_d(self.output).detach()
-            real_d_pred = self.net_d(self.gt)
+            fake_d_pred = self.net_d(self.output, **kwargs).detach()
+            real_d_pred = self.net_d(self.gt, **kwargs)
             l_d_real = self.cri_gan(real_d_pred - torch.mean(fake_d_pred), True, is_disc=True) * 0.5
             l_d_real.backward()
             # fake
-            fake_d_pred = self.net_d(self.output.detach())
+            fake_d_pred = self.net_d(self.output.detach(), **kwargs)
             l_d_fake = self.cri_gan(fake_d_pred - torch.mean(real_d_pred.detach()), False, is_disc=True) * 0.5
             l_d_fake.backward()
             self.optimizer_d.step()
@@ -164,7 +177,6 @@ class ESRASRGANModel(SRGANModel):
 
         if self.ema_decay > 0:
             self.model_ema(decay=self.ema_decay)
-
     def nondist_validation(self, dataloader, current_iter, tb_logger, save_img):
         dataset_name = dataloader.dataset.opt['name']
         with_metrics = self.opt['val'].get('metrics') is not None
@@ -193,7 +205,10 @@ class ESRASRGANModel(SRGANModel):
             metric_data['hr'] = visuals['hr']
             metric_data['mean'] = visuals['mean']
             metric_data['std'] = visuals['std']
-            metric_data['scale_factor'] = visuals['scale_factor']
+            # metric_data['scale_factor'] = visuals['scale_factor']
+            # metric_data['labels'] = visuals['labels']
+            # metric_data['z'] = visuals['z']
+            # metric_data['astro_params'] = visuals['astro_params']
 
             # tentative for out of GPU memory
             del self.gt
@@ -201,6 +216,13 @@ class ESRASRGANModel(SRGANModel):
             del self.output
             del self.T21_lr_mean
             del self.T21_lr_std
+            del self.scale_factor
+            del self.labels
+            del self.z
+            del self.astro_params
+            del self.delta
+            del self.vbv
+
             torch.cuda.empty_cache()
 
             # scale back to mK
@@ -229,6 +251,7 @@ class ESRASRGANModel(SRGANModel):
 
                     slice_idx = d // 2
                     for i in range(b):
+                        z = visuals['z'][i].item() if isinstance(visuals['z'], torch.Tensor) else visuals['z'][i][0].item()
                         vmin = min(sr_cube[i, :, :, slice_idx].min(), hr_cube[i, :, :, slice_idx].min())
                         vmax = max(sr_cube[i, :, :, slice_idx].max(), hr_cube[i, :, :, slice_idx].max())
                         rmse_i = rmse[i].item()
@@ -251,14 +274,14 @@ class ESRASRGANModel(SRGANModel):
                         axes[3, i].loglog(k_hr, dsq_hr[i, 0], label='$T_{{21}}$ HR', ls='solid', lw=2)
                         axes[3, i].loglog(k_sr, dsq_sr[i, 0], label='$T_{{21}}$ SR', ls='solid', lw=2)
                         axes[3, i].set_xlabel('$k\\ [\\mathrm{{cMpc^{-1}}}]$')
-                        axes[3, i].legend(title=f'RMSE: {rmse_i:.2f}, \nscale: {scale_i:.2f}', loc='upper left')
+                        axes[3, i].legend(title=f'RMSE: {rmse_i:.2f}, \nscale: {scale_i:.2f}, \nz: {z:.1f}', loc='lower right')
 
                     axes[0, 0].set_ylabel('HR')
                     axes[1, 0].set_ylabel('SR')
                     axes[2, 0].set_ylabel('PDF')
                     axes[3, 0].set_ylabel('$\\Delta^2_{{21}}\\ \\mathrm{{[mK^2]}}$ ')
 
-                    save_img_path = osp.join(self.opt['path']['visualization'], f'{current_iter}.png')
+                    save_img_path = osp.join(self.opt['path']['visualization'], f'{current_iter}_z_{z:.0f}.png')
                     plt.savefig(save_img_path, bbox_inches='tight')
                     plt.close(fig)
 
@@ -291,7 +314,6 @@ class ESRASRGANModel(SRGANModel):
                 self._update_best_metric_result(dataset_name, metric, self.metric_results[metric], current_iter)
 
             self._log_validation_metric_values(current_iter, dataset_name, tb_logger)
-        print(f'Finished testing {dataset_name} dataset')
 
     def test(self):
         b, c, h, w, d = self.gt.shape if isinstance(self.gt, torch.Tensor) else self.gt[0].shape
@@ -303,15 +325,25 @@ class ESRASRGANModel(SRGANModel):
             with torch.no_grad():
                 if isinstance(self.lq, torch.Tensor):
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
-                        output = self.net_g_ema(self.lq, xyz_hr)
+                        kwargs = {'z': self.z} if self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) else {}
+                        if hasattr(self, 'delta'):
+                            kwargs['delta'] = self.delta
+                        if hasattr(self, 'vbv'):
+                            kwargs['vbv'] = self.vbv
+                        output = self.net_g_ema(self.lq, xyz_hr, **kwargs)
                         self.output = output[0]
                         # feature_map = output[1]
                 elif isinstance(self.lq, list):
                     # tqdm loop verbose argument
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
                         self.output = []
-                        for lq in tqdm(self.lq, total=len(self.lq), disable=not self.opt['val'].get('pbar', False), desc='testing scales'):
-                            output = self.net_g_ema(lq, xyz_hr)
+                        for i,lq in tqdm(enumerate(self.lq), total=len(self.lq), disable=True): # not self.opt['val'].get('pbar', False), desc='testing scales'):
+                            kwargs = {'z': self.z[i]} if self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) else {}
+                            if hasattr(self, 'delta'):
+                                kwargs['delta'] = self.delta[i]
+                            if hasattr(self, 'vbv'):
+                                kwargs['vbv'] = self.vbv[i]
+                            output = self.net_g_ema(lq, xyz_hr, **kwargs)
                             self.output.append(output[0])
                             # feature_map = output[1]
                             # self.output.append(self.net_g_ema(lq, xyz_hr))
@@ -320,15 +352,24 @@ class ESRASRGANModel(SRGANModel):
             with torch.no_grad():
                 if isinstance(self.lq, torch.Tensor):
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
-                        output = self.net_g(self.lq, xyz_hr)
+                        kwargs = {'z': self.z} if self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) else {}
+                        if hasattr(self, 'delta'):
+                            kwargs['delta'] = self.delta
+                        if hasattr(self, 'vbv'):
+                            kwargs['vbv'] = self.vbv
+                        output = self.net_g(self.lq, xyz_hr, **kwargs)
                         self.output = output[0]
                         # feature_map = output[1]
                 elif isinstance(self.lq, list):
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
-
                         self.output = []
-                        for lq in tqdm(self.lq, total=len(self.lq), disable=not self.opt['val'].get('pbar', False), desc='testing scales'):
-                            output = self.net_g(lq, xyz_hr)
+                        for i,lq in tqdm(enumerate(self.lq), total=len(self.lq), disable=True): # not self.opt['val'].get('pbar', False), desc='testing scales'):
+                            kwargs = {'z': self.z[i]} if self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) else {}
+                            if hasattr(self, 'delta'):
+                                kwargs['delta'] = self.delta[i]
+                            if hasattr(self, 'vbv'):
+                                kwargs['vbv'] = self.vbv[i]
+                            output = self.net_g(lq, xyz_hr, **kwargs)
                             self.output.append(output[0])
                             # feature_map = output[1]
             self.net_g.train()
@@ -339,6 +380,17 @@ class ESRASRGANModel(SRGANModel):
         self.T21_lr_mean = data['T21_lr_mean'].to(self.device) if isinstance(data['T21_lr_mean'], torch.Tensor) else [mean.to(self.device) for mean in data['T21_lr_mean']]
         self.T21_lr_std = data['T21_lr_std'].to(self.device) if isinstance(data['T21_lr_std'], torch.Tensor) else [std.to(self.device) for std in data['T21_lr_std']]
         self.scale_factor = data['scale_factor'].to(self.device) if isinstance(data['scale_factor'], torch.Tensor) else [scale.to(self.device) for scale in data['scale_factor']]
+        self.labels = data['labels'].to(self.device) if isinstance(data['labels'], torch.Tensor) else [label.to(self.device) for label in data['labels']]
+        self.z = self.labels[:,0].to(self.device) if isinstance(self.labels, torch.Tensor) else [label[:, 0].to(self.device) for label in self.labels]
+        self.astro_params = self.labels[:,1:].to(self.device) if isinstance(self.labels, torch.Tensor) else [label[:, 1:].to(self.device) for label in self.labels]
+        if 'delta' in data.keys(): # if not data.get('delta', None) is None:
+            self.delta = data['delta'].to(self.device) if isinstance(data['delta'], torch.Tensor) else [delta.to(self.device) for delta in data['delta']]
+        else:
+            self.delta = None
+        if 'vbv' in data.keys():
+            self.vbv = data['vbv'].to(self.device) if isinstance(data['vbv'], torch.Tensor) else [vbv.to(self.device) for vbv in data['vbv']]
+        else:
+            self.vbv = None
 
     def get_current_visuals(self):
         out_dict = OrderedDict()
@@ -348,4 +400,7 @@ class ESRASRGANModel(SRGANModel):
         out_dict['mean'] = self.T21_lr_mean.detach().cpu() if isinstance(self.T21_lr_mean, torch.Tensor) else torch.cat(self.T21_lr_mean, dim=0).detach().cpu()
         out_dict['std'] = self.T21_lr_std.detach().cpu() if isinstance(self.T21_lr_std, torch.Tensor) else torch.cat(self.T21_lr_std, dim=0).detach().cpu()
         out_dict['scale_factor'] = self.scale_factor if isinstance(self.scale_factor, torch.Tensor) else torch.cat(self.scale_factor, dim=0).detach().cpu()
+        out_dict['labels'] = self.labels.detach().cpu() if isinstance(self.labels, torch.Tensor) else torch.cat(self.labels, dim=0).detach().cpu()
+        out_dict['z'] = self.z.detach().cpu() if isinstance(self.z, torch.Tensor) else torch.cat(self.z, dim=0).detach().cpu()
+        out_dict['astro_params'] = self.astro_params.detach().cpu() if isinstance(self.astro_params, torch.Tensor) else torch.cat(self.astro_params, dim=0).detach().cpu()
         return out_dict

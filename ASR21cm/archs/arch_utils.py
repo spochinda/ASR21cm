@@ -9,6 +9,7 @@ from functools import partial
 # from pdb import set_trace as stx
 from timm.layers import DropPath  # , trunc_normal_
 from typing import Callable
+from ASR21cm.archs.unet_utils import PositionalEmbedding, GroupNorm, Linear
 
 try:
     from mamba_ssm.ops.selective_scan_interface import selective_scan_fn  # selective_scan_ref
@@ -1269,7 +1270,10 @@ class MLP_decoder(nn.Module):
         super(MLP_decoder, self).__init__()
         self.use_checkpoint = kwargs.get('use_checkpoint', False)
         self.chunk = kwargs.get('chunk', False)
+        self.conditional_cubes = kwargs.get('conditional_cubes', False)
+
         latent_dim = latent_dim + 3  # +3 for coordinates
+        latent_dim = latent_dim + 2 if self.conditional_cubes else latent_dim
 
         stage_one = []
         stage_two = []
@@ -1356,71 +1360,17 @@ def make_coord(shape, ranges=None, flatten=True):
 # <Zhang, Yulun, et al. "Residual dense network for image super-resolution.">
 # Here code is modified from: https://github.com/yjn870/RDN-pytorch/blob/master/models.py
 # -------------------------------
-"""
-class DenseLayer(nn.Module):
 
-    def __init__(self, in_channels, out_channels):
-        super(DenseLayer, self).__init__()
-        self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=3 // 2)
-        self.relu = nn.ReLU(inplace=True)
+class FeatureAffine(nn.Module):
 
-    def forward(self, x):
-        return torch.cat([x, self.relu(self.conv(x))], 1)
-
-
-class RDB(nn.Module):
-
-    def __init__(self, in_channels, growth_rate, num_layers):
-        super(RDB, self).__init__()
-        self.layers = nn.Sequential(*[DenseLayer(in_channels + growth_rate * i, growth_rate) for i in range(num_layers)])
-        # local feature fusion
-        self.lff = nn.Conv3d(in_channels + growth_rate * num_layers, in_channels, kernel_size=1)
+    def __init__(self, num_features):
+        super().__init__()
+        self.num_features = num_features
+        self.weight = nn.Parameter(torch.ones(1, num_features, 1, 1, 1))
+        self.bias = nn.Parameter(torch.zeros(1, num_features, 1, 1, 1))
 
     def forward(self, x):
-        lff = self.lff(self.layers(x))
-        x = x + lff
-        return x
-
-
-class RDN(nn.Module):
-
-    def __init__(self, latent_dim=128, num_features=64, growth_rate=64, num_blocks=8, num_layers=3, **kwargs):
-        super(RDN, self).__init__()
-        self.use_checkpoint = kwargs.get('use_checkpoint', False)
-
-        self.G0 = num_features
-        self.G = growth_rate
-        self.D = num_blocks
-        self.C = num_layers
-        # shallow feature extraction
-        self.sfe1 = nn.Conv3d(1, num_features, kernel_size=3, padding=3 // 2)
-        self.sfe2 = nn.Conv3d(num_features, num_features, kernel_size=3, padding=3 // 2)
-        # residual dense blocks
-        self.rdbs = nn.ModuleList([RDB(self.G0, self.G, self.C)])
-        for _ in range(self.D - 1):
-            self.rdbs.append(RDB(self.G0, self.G, self.C))
-        # global feature fusion
-        self.gff = nn.Sequential(nn.Conv3d(32, 32, kernel_size=1), nn.Conv3d(32, 8, kernel_size=3, padding=3 // 2))
-        self.output = nn.Conv3d(8, latent_dim, kernel_size=3, padding=3 // 2)
-
-    def forward(self, x):
-        sfe1 = self.sfe1(x)
-        sfe2 = self.sfe2(sfe1)
-        x = sfe2
-        local_features = []
-        for i in range(self.D):
-            if self.use_checkpoint:
-                x = torch.utils.checkpoint.checkpoint(self.rdbs[i], x, use_reentrant=False)
-            else:
-                x = self.rdbs[i](x)
-            local_features.append(x)
-        gff = torch.cat(local_features, 1)
-        gff = self.gff(gff)
-        x = gff + sfe1  # global residual learning
-        x = self.output(x)
-        return x
-"""
-
+        return x * self.weight + self.bias
 
 class DenseLayer(nn.Module):
 
@@ -1443,13 +1393,27 @@ class DenseLayer(nn.Module):
 
 class RDB(nn.Module):
 
-    def __init__(self, in_channels, growth_rate, num_layers):
+    def __init__(self, in_channels, growth_rate, num_layers, emb_channels=None):
         super(RDB, self).__init__()
+        self.emb_channels = emb_channels
+
+        if self.emb_channels:
+            self.affine = Linear(in_features=emb_channels, out_features=in_channels * 2) #, **init)
+            self.norm1 = GroupNorm(num_channels=in_channels, eps=1e-5)
+
         self.layers = nn.Sequential(*[DenseLayer(in_channels + growth_rate * i, growth_rate) for i in range(num_layers)])
         # local feature fusion
         self.lff = nn.Conv3d(in_channels + growth_rate * num_layers, growth_rate, kernel_size=1)
 
-    def forward(self, x):
+    def forward(self, x, emb=None):
+        if emb is None:
+            assert self.emb_channels is None, "Embedding channels are defined in RDB, but no embedding provided."
+        else:
+            assert self.emb_channels is not None, "Embedding channels are not defined in RDB, but embedding provided."
+            params = self.affine(emb).unsqueeze(2).unsqueeze(3).unsqueeze(4).to(x.dtype)
+            scale, shift = params.chunk(chunks=2, dim=1)
+            x = torch.nn.functional.silu(torch.addcmul(shift, self.norm1(x), scale + 1))
+
         # print(f"lff in channels : {self.lff.in_channels}, out channels : {self.lff.out_channels}")
         lff = self.layers(x)
         # print(f"lff shape in RDB after layers: {lff.shape}")
@@ -1458,42 +1422,46 @@ class RDB(nn.Module):
         return x + lff  # local residual learning
 
 
-class FeatureAffine(nn.Module):
-
-    def __init__(self, num_features):
-        super().__init__()
-        self.num_features = num_features
-        self.weight = nn.Parameter(torch.ones(1, num_features, 1, 1, 1))
-        self.bias = nn.Parameter(torch.zeros(1, num_features, 1, 1, 1))
-
-    def forward(self, x):
-        return x * self.weight + self.bias
-
-
 class RDN(nn.Module):
 
-    def __init__(self, latent_dim=16, num_features=16, growth_rate=16, num_blocks=8, num_layers=3, **kwargs):
+    def __init__(self, latent_dim=16, num_features=16, growth_rate=16, num_blocks=8, num_layers=3, redshift_embedding=False, **kwargs):
         super(RDN, self).__init__()
         self.use_checkpoint = kwargs.get('use_checkpoint', False)
-
+        self.redshift_embedding = redshift_embedding
         self.G0 = num_features
         self.G = growth_rate
         self.D = num_blocks
         self.C = num_layers
+
+        if self.redshift_embedding:
+            self.z_emb = PositionalEmbedding(num_channels=num_features*4, endpoint=True)
+            self.map_layer0 = Linear(in_features=4*num_features, out_features=4*num_features) # , **init)
+            self.map_layer1 = Linear(in_features=4*num_features, out_features=num_features) # , **init)
+
         # shallow feature extraction
         self.sfe1 = nn.Conv3d(1, num_features, kernel_size=3, padding=3 // 2)
         self.sfe2 = nn.Conv3d(num_features, num_features, kernel_size=3, padding=3 // 2)
         # residual dense blocks
-        self.rdbs = nn.ModuleList([RDB(self.G0, self.G, self.C)])
+        self.rdbs = nn.ModuleList([RDB(self.G0, self.G, self.C, emb_channels=num_features if self.redshift_embedding else None)])
         for _ in range(self.D - 1):
-            self.rdbs.append(RDB(self.G, self.G, self.C))
+            self.rdbs.append(RDB(self.G, self.G, self.C, emb_channels=num_features if self.redshift_embedding else None))
         # global feature fusion
         self.gff = nn.Sequential(nn.Conv3d(self.G * self.D, self.G0, kernel_size=1), nn.Conv3d(self.G0, self.G0, kernel_size=3, padding=3 // 2))
         self.output = nn.Conv3d(self.G0, latent_dim, kernel_size=3, padding=3 // 2)
 
-        self.affine = FeatureAffine(latent_dim)
 
-    def forward(self, x):
+    def forward(self, x, z=None):
+        if self.redshift_embedding:
+            assert z is not None, "Redshift embedding is enabled, but no redshift value provided."
+            emb = self.z_emb(z)
+            emb = emb.reshape(emb.shape[0], 2, -1).flip(1).reshape(*emb.shape)  # swap sin/cos
+            # class labels (astro parameters) to be added...
+            emb = torch.nn.functional.silu(self.map_layer0(emb))
+            emb = torch.nn.functional.silu(self.map_layer1(emb))
+        else:
+            assert z is None, "Redshift value provided, but redshift embedding is not enabled."
+            emb = None
+
         # print(f"1: shape: {x.shape}")
         sfe1 = self.sfe1(x)
         # print(f"2: shape: {sfe1.shape}")
@@ -1503,7 +1471,7 @@ class RDN(nn.Module):
         # print(f"4: shape: {x.shape}")
         local_features = []
         for i in range(self.D):
-            x = self.rdbs[i](x)
+            x = self.rdbs[i](x, emb)
             # print(f"5.{i}: shape: {x.shape}")
             local_features.append(x)
         gff = torch.cat(local_features, 1)
@@ -1515,32 +1483,33 @@ class RDN(nn.Module):
         x = self.output(x)
         # print(f"9: shape: {x.shape}")
         # print(f"10: shape: {x.shape}, affine: {self.affine.num_features}", flush=True)
-        x = self.affine(x)
         return x
 
 
 if __name__ == '__main__':
-    d = 64  # 96
-    test_input = torch.randn(1, 1, d, d, d)  # .cuda()
+    d = 32  # 96
+    test_input = torch.randn(2, 1, d, d, d)  # .cuda()
     b, c, h, w, d = test_input.shape
 
-    # encoder = modified_net2(downconv=True)#.cuda() #
-    # out = encoder(test_input) #
-    # print("encoder our shape test: ", out.shape) #
-
-    encoder = MambaIR(  # img_size=32., patch_size=1,
-        in_chans=1,
-        embed_dim=16,
-        depths=(6, 6, 6, 6),
-        drop_rate=0.,
-        d_state=16,
-        mlp_ratio=1.,
-        drop_path_rate=0.1,
-        norm_layer=nn.LayerNorm,
-        patch_norm=True,
-        use_checkpoint=False,
-        upscale=None,
-    )  # img_range=1.,)
+    encoder  = RDN(latent_dim=32,
+                   num_features=16,
+                   growth_rate=16,
+                   num_blocks=8,
+                   num_layers=3,
+                   redshift_embedding=True)
+    #encoder = MambaIR(  # img_size=32., patch_size=1,
+    #    in_chans=1,
+    #    embed_dim=16,
+    #    depths=(6, 6, 6, 6),
+    #    drop_rate=0.,
+    #    d_state=16,
+    #    mlp_ratio=1.,
+    #    drop_path_rate=0.1,
+    #    norm_layer=nn.LayerNorm,
+    #    patch_norm=True,
+    #    use_checkpoint=False,
+    #    upscale=None,
+    #)  # img_range=1.,)
     # encoder = MambaIREncoder(
     #    inp_channels=1,
     #    out_channels=1,
@@ -1550,6 +1519,10 @@ if __name__ == '__main__':
     #    mlp_ratio=1.,
     #    bias=False,
     # )
-    test_input = torch.rand(2, 1, 64, 64, 64)
-    out = encoder(test_input)
-    # print('encoder out shape test: ', out.shape)
+    labels = torch.tensor([[16], [16]])  # Example redshift value
+    z, others = labels[:, 0], labels[:, 1:]  # z is the redshift value, others are additional parameters
+    print(f'z shape: {z.shape}, z: {z}, \nothers: {others.shape}, others: {others}')
+    #out = encoder(test_input, z=z)
+    #print('encoder out shape test: ', out.shape)
+    #print(encoder)
+

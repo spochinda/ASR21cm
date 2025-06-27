@@ -5,6 +5,7 @@ import SR21cm.utils as utils
 import torch
 from functools import partial
 from scipy.io import loadmat
+import time
 
 from basicsr.utils.registry import DATASET_REGISTRY
 
@@ -132,13 +133,10 @@ class Custom21cmDataset(torch.utils.data.Dataset):
         return self.dataset
 
 
-def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr=None, phase='train', **kwargs):
-    conditional_cubes = kwargs.get('conditional_cubes', False)
-
+def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr=None, conditional_cubes=False, phase='train', **kwargs):
     T21, delta, vbv, labels = zip(*batch)
     T21 = torch.concatenate(T21, dim=0).unsqueeze(1)
     # T21 = utils.get_subcubes(cubes=T21, cut_factor=cut_factor)
-
     if conditional_cubes:
         delta = torch.concatenate(delta, dim=0).unsqueeze(1)
         # delta = utils.get_subcubes(cubes=delta, cut_factor=cut_factor)
@@ -146,16 +144,16 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         # vbv = utils.get_subcubes(cubes=vbv, cut_factor=cut_factor)
         cubes = torch.cat([T21, delta, vbv], dim=1)
         cubes = random_spatial_crop(cubes, crop_size=gt_size)
-        T21, T21_lr, delta, vbv = cubes.split([1, 1, 1, 1], dim=1)
+        T21, delta, vbv = cubes.chunk(3, dim=1)
     else:
         T21 = random_spatial_crop(T21, crop_size=gt_size)
         # cubes = random_spatial_crop(cubes, crop_size=64)
 
-    labels = torch.concatenate(labels, dim=0)
-    b, label_dim = labels.shape
-    expansion_factor = 2**(3 * cut_factor)
-    labels = labels.repeat(1, expansion_factor)
-    labels = labels.view(b * expansion_factor, label_dim)
+    labels = torch.concatenate(labels, dim=0) # labels is tuple of tensors because each sample can have different astro parameters
+    #b, label_dim = labels.shape
+    #expansion_factor = 2**(3 * cut_factor)
+    #labels = labels.repeat(1, expansion_factor)
+    #labels = labels.view(b * expansion_factor, label_dim)
 
     b, c, h, w, d = T21.shape
     size_min = h // scale_max
@@ -175,7 +173,6 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
         T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
         T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
-
         if conditional_cubes:
             delta, _, _ = utils.normalize(delta, mode='standard')
             vbv, _, _ = utils.normalize(vbv, mode='standard')
@@ -183,7 +180,7 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     elif phase == 'val':
         if h_lr is None:
-            h_lr = [h // i for i in range(2, 5)]
+            h_lr = [h // i for i in range(2, 5)]#5)]
         elif isinstance(h_lr, int):
             h_lr = [h // h_lr]
         elif isinstance(h_lr, list):
@@ -208,7 +205,8 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
     else:
         raise ValueError(f'Unknown phase: {phase}')
     # return {'lq': T21_lr, 'gt': T21, 'delta': delta, 'vbv': vbv, 'labels': labels, 'T21_lr_mean': T21_lr_mean, 'T21_lr_std': T21_lr_std, 'scale_factor': scale_factor}
-    return dict(lq=T21_lr, gt=T21, delta=delta, vbv=vbv, labels=labels, T21_lr_mean=T21_lr_mean, T21_lr_std=T21_lr_std, scale_factor=scale_factor, **conditional_cubes)
+    data = dict(lq=T21_lr, gt=T21, labels=labels, T21_lr_mean=T21_lr_mean, T21_lr_std=T21_lr_std, scale_factor=scale_factor, **conditional_cubes)
+    return data
 
 
 def create_collate_fn(opt, phase='train'):
@@ -218,7 +216,8 @@ def create_collate_fn(opt, phase='train'):
     n_augment = opt.get('n_augment', 1)
     h_lr = opt.get('val_size', None)
     gt_size = opt.get('gt_size', 64)
-    return partial(collate_fn, cut_factor=cut_factor, scale_min=scale_min, scale_max=scale_max, n_augment=n_augment, h_lr=h_lr, gt_size=gt_size, phase=phase)
+    conditional_cubes = opt.get('conditional_cubes', False)
+    return partial(collate_fn, cut_factor=cut_factor, scale_min=scale_min, scale_max=scale_max, n_augment=n_augment, h_lr=h_lr, gt_size=gt_size, conditional_cubes=conditional_cubes, phase=phase)
 
 
 def random_spatial_crop(tensor, crop_size):
