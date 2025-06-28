@@ -1,4 +1,5 @@
 import matplotlib.gridspec as gridspec
+import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -67,17 +68,19 @@ if __name__ == '__main__':
         input, _, _ = utils.normalize(input, mode='standard')
 
         with torch.no_grad():
-            # output, _ = net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z)
-            # T21_sr.append(output * input_std + input_mean)
+            output, _ = net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z)
+            T21_sr.append(output * input_std + input_mean)
             input = input * input_std + input_mean  # denormalize input
             input = torch.nn.functional.interpolate(input, size=256, mode='trilinear')  # upsample input to match output size
             T21_lr.append(input)
     torch.cuda.empty_cache()
 
-    T21_lr = torch.stack(T21_lr, dim=0)
-    # T21_sr = torch.stack(T21_sr, dim=0)
-    # torch.save(T21_sr, os.path.join(current_dir, 'T21_sr.pt'))
-    T21_sr = torch.load(os.path.join(current_dir, 'T21_sr.pt'))
+    T21_lr = torch.concat(T21_lr, dim=0)
+    T21_sr = torch.concat(T21_sr, dim=0)
+    torch.save(T21_sr, os.path.join(current_dir, 'T21_sr.pt'))
+    # T21_sr = torch.load(os.path.join(current_dir, 'T21_sr.pt'))
+    print(f'T21_sr shape: {T21_sr.shape}', flush=True)
+    print(f'T21_lr shape: {T21_lr.shape}', flush=True)
 
     # matplotlib settings
     rasterized = False
@@ -111,15 +114,14 @@ if __name__ == '__main__':
                 axes[row, col].tick_params(labelleft=False)  # Hides y tick labels only for this axis
             if row < 3:
                 axes[row, col].tick_params(labelbottom=False)  # Hides x tick labels only for this axis
-
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     slice_idx = 128
     vmin = T21_sr.min()  # torch.quantile(T21_sr, 0.01).item()
     vmax = T21_sr.max()  # torch.quantile(T21_sr, 0.99).item()
     k_hr, dsq_hr = calculate_power_spectrum(data_x=T21_hr, Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
     for i, size in enumerate(tqdm(sizes, desc='Plotting...')):
-        k_sr, dsq_sr = calculate_power_spectrum(data_x=T21_sr[i], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
-        k_lr, dsq_lr = calculate_power_spectrum(data_x=T21_lr[i], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
-        RMSE = torch.sqrt(torch.mean((T21_sr[i] - T21_hr)**2))
+        k_sr, dsq_sr = calculate_power_spectrum(data_x=T21_sr[i:i + 1], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
+        k_lr, dsq_lr = calculate_power_spectrum(data_x=T21_lr[i:i + 1], Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
         scale = T21_sr[i].shape[2] / size
 
         axes[0, i].imshow(T21_hr[0, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
@@ -127,32 +129,44 @@ if __name__ == '__main__':
         axes[1, i].imshow(T21_sr[i][0, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
         axes[1, i].set_title('SR')
         axes[2, i].imshow(T21_lr[i][0, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
-        axes[2, i].set_title('LR (Interpolated)')
+        axes[2, i].set_title('LR Interpolated (LRI)')
 
         xmin = min(T21_sr[i].min(), T21_hr.min())
         xmax = max(T21_sr[i].max(), T21_hr.max())
         bins = np.linspace(xmin, xmax, 100)
-        axes[3, i].hist(T21_hr.cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', histtype='step', linewidth=4, density=True, zorder=2, rasterized=rasterized)
-        axes[3, i].hist(T21_sr[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', histtype='step', linewidth=4, density=True, zorder=3, rasterized=rasterized)
-        axes[3, i].hist(T21_lr[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='LR', histtype='step', linewidth=4, density=True, zorder=1, rasterized=rasterized)
+        axes[3, i].hist(T21_hr.cpu().numpy().flatten(), bins=bins, alpha=0.5, label='HR', histtype='step', linewidth=4, density=True, zorder=2, rasterized=rasterized, color=colors[0])
+        axes[3, i].hist(T21_sr[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='SR', histtype='step', linewidth=4, density=True, zorder=3, rasterized=rasterized, color=colors[1])
+        axes[3, i].hist(T21_lr[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='LR', histtype='step', linewidth=4, density=True, zorder=1, rasterized=rasterized, color=colors[2])
         axes[3, i].set_xlabel('$T_{21}$ [$\\mathrm{mK}$]')
         rmse_sr = torch.sqrt(torch.mean((T21_sr[i:i + 1] - T21_hr)**2))
         rmse_lr = torch.sqrt(torch.mean((T21_lr[i:i + 1] - T21_hr)**2))
-        axes[3, i].text(0.35, 0.95, rf'$\mathrm{{RMSE}}_{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[3, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
-        axes[4, i].loglog(k_hr, dsq_hr[0, 0], label='$T_{{21}}$ HR', ls='solid', lw=2, rasterized=rasterized, zorder=2)
-        axes[4, i].loglog(k_sr, dsq_sr[0, 0], label='$T_{{21}}$ SR', ls='solid', lw=2, rasterized=rasterized, zorder=3)
-        axes[4, i].loglog(k_lr, dsq_lr[0, 0], label='$T_{{21}}$ LR (Interpolated)', ls='dashed', lw=2, rasterized=rasterized, zorder=1)
+        axes[3, i].text(0.05, 0.95, rf's={256 / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[3, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+
+        axes[4, i].loglog(k_hr, dsq_hr[0, 0], label='$T_{{21}}$ HR', ls='solid', lw=2, rasterized=rasterized, zorder=2, color=colors[0])
+        axes[4, i].loglog(k_sr, dsq_sr[0, 0], label='$T_{{21}}$ SR', ls='solid', lw=2, rasterized=rasterized, zorder=3, color=colors[1])
+        axes[4, i].loglog(k_lr, dsq_lr[0, 0], label='$T_{{21}}$ LRI', ls='solid', lw=2, rasterized=rasterized, zorder=1, color=colors[2])
+        RMSE_dsq_sr = torch.sqrt(torch.nanmean((dsq_sr - dsq_hr)**2))
+        RMSE_dsq_lr = torch.sqrt(torch.nanmean((dsq_lr - dsq_hr)**2))
+        axes[4, i].text(0.05, 0.95, rf's={256 / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}}^{{\Delta^2}} = {RMSE_dsq_sr.item():.2f}\ \mathrm{{mK}}^2$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}}^{{\Delta^2}} = {RMSE_dsq_lr.item():.2f}\ \mathrm{{mK}}^2$', transform=axes[4, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
 
         axes[4, i].set_xlabel('$k\\ [\\mathrm{{cMpc^{-1}}}]$')
-        axes[4, i].legend(fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='lower left')
+        # axes[4, i].legend(fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='lower left')
+
+    # After plotting your histograms, before calling legend:
+    line_hr = mlines.Line2D([], [], color=colors[0], linewidth=4, label='HR')
+    line_sr = mlines.Line2D([], [], color=colors[1], linewidth=4, label='SR')
+    line_lr = mlines.Line2D([], [], color=colors[2], linewidth=4, label='LRI')
+    axes[3, 0].legend(handles=[line_hr, line_sr, line_lr], fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='center left')
 
     axes[3, 0].set_title(r'12 $\rightarrow$ 3 [cMpc/voxel]')
     axes[3, 1].set_title(r'10 $\rightarrow$ 3 [cMpc/voxel]')
     axes[3, 2].set_title(r'8 $\rightarrow$ 3 [cMpc/voxel]')
     axes[3, 3].set_title(r'6 $\rightarrow$ 3 [cMpc/voxel]')
     axes[3, 0].set_ylabel('PDF')
+    axes[3, 0].set_xlim(-250, -50)
+    axes[3, 0].set_ylim(0, 0.06)
     axes[4, 0].set_ylabel(r'$\Delta^2(k)$ [${\rm mK^2}$]')
-    axes[4, 0].set_ylim(1e-1, 3e2)
+    axes[4, 0].set_ylim(1e-0, 1e3)
 
     save_img_path = os.path.join(current_dir, 'arbitrary_scaling.pdf')
     plt.savefig(save_img_path, bbox_inches='tight')
