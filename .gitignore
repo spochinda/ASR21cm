@@ -5,6 +5,10 @@ tb_logger/*
 wandb/*
 tmp/*
 good_experiments/*
+analysis/*
+!analysis/table_scaling.py
+!analysis/redshift_scaling.py
+!analysis/arbitrary_scaling.py
 
 *.DS_Store
 # Slurm job output files and submission scripts
