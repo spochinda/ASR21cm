@@ -20,13 +20,16 @@ if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    T21_hr = loadmat(os.path.join(root_dir, 'datasets/varying_IC/T21_cubes/T21_cube_z18__Npix256_IC20.mat'))['Tlin']
+    Npix = 512
+    IC = 0
+
+    T21_hr = loadmat(os.path.join(root_dir, f'datasets/varying_IC/T21_cubes/T21_cube_z18__Npix{Npix}_IC{IC}.mat'))['Tlin']
     T21_hr = torch.from_numpy(T21_hr).unsqueeze(0).unsqueeze(0).to(torch.float32)  # Convert to BCHWD
 
-    delta = loadmat(os.path.join(root_dir, 'datasets/varying_IC/IC_cubes/delta_Npix256_IC20.mat'))['delta']
+    delta = loadmat(os.path.join(root_dir, f'datasets/varying_IC/IC_cubes/delta_Npix{Npix}_IC{IC}.mat'))['delta']
     delta = torch.from_numpy(delta).unsqueeze(0).unsqueeze(0).to(torch.float32)  # Convert to BCHWD format
     delta, _, _ = utils.normalize(delta, mode='standard')
-    vbv = loadmat(os.path.join(root_dir, 'datasets/varying_IC/IC_cubes/vbv_Npix256_IC20.mat'))['vbv']
+    vbv = loadmat(os.path.join(root_dir, f'datasets/varying_IC/IC_cubes/vbv_Npix{Npix}_IC{IC}.mat'))['vbv']
     vbv = torch.from_numpy(vbv).unsqueeze(0).unsqueeze(0).to(torch.float32)  # Convert to BCHWD format
     vbv, _, _ = utils.normalize(vbv, mode='standard')
     z = torch.tensor([
@@ -57,7 +60,9 @@ if __name__ == '__main__':
     xyz_hr = xyz_hr.view(1, -1, 3)
     xyz_hr = xyz_hr.repeat(b, 1, 1)
 
-    sizes = [64, 77, 96, 128]
+    # sizes = [64, 77, 96, 128] # for 256
+    sizes = (Npix * 3 / np.array([12, 10, 8, 6])).round().astype(int)  # for 512
+
     T21_sr = []
     T21_lr = []
     net_g.eval()
@@ -71,7 +76,7 @@ if __name__ == '__main__':
             output, _ = net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z)
             T21_sr.append(output * input_std + input_mean)
             input = input * input_std + input_mean  # denormalize input
-            input = torch.nn.functional.interpolate(input, size=256, mode='trilinear')  # upsample input to match output size
+            input = torch.nn.functional.interpolate(input, size=Npix, mode='trilinear')  # upsample input to match output size
             T21_lr.append(input)
     torch.cuda.empty_cache()
 
@@ -140,14 +145,14 @@ if __name__ == '__main__':
         axes[3, i].set_xlabel('$T_{21}$ [$\\mathrm{mK}$]')
         rmse_sr = torch.sqrt(torch.mean((T21_sr[i:i + 1] - T21_hr)**2))
         rmse_lr = torch.sqrt(torch.mean((T21_lr[i:i + 1] - T21_hr)**2))
-        axes[3, i].text(0.05, 0.95, rf's={256 / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[3, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+        axes[3, i].text(0.05, 0.95, rf's={Npix / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[3, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
 
         axes[4, i].loglog(k_hr, dsq_hr[0, 0], label='$T_{{21}}$ HR', ls='solid', lw=2, rasterized=rasterized, zorder=2, color=colors[0])
         axes[4, i].loglog(k_sr, dsq_sr[0, 0], label='$T_{{21}}$ SR', ls='solid', lw=2, rasterized=rasterized, zorder=3, color=colors[1])
         axes[4, i].loglog(k_lr, dsq_lr[0, 0], label='$T_{{21}}$ LRI', ls='solid', lw=2, rasterized=rasterized, zorder=1, color=colors[2])
         RMSE_dsq_sr = torch.sqrt(torch.nanmean((dsq_sr - dsq_hr)**2))
         RMSE_dsq_lr = torch.sqrt(torch.nanmean((dsq_lr - dsq_hr)**2))
-        axes[4, i].text(0.05, 0.95, rf's={256 / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}}^{{\Delta^2}} = {RMSE_dsq_sr.item():.2f}\ \mathrm{{mK}}^2$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}}^{{\Delta^2}} = {RMSE_dsq_lr.item():.2f}\ \mathrm{{mK}}^2$', transform=axes[4, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+        axes[4, i].text(0.05, 0.95, rf's={Npix / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}}^{{\Delta^2}} = {RMSE_dsq_sr.item():.2f}\ \mathrm{{mK}}^2$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}}^{{\Delta^2}} = {RMSE_dsq_lr.item():.2f}\ \mathrm{{mK}}^2$', transform=axes[4, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
 
         axes[4, i].set_xlabel('$k\\ [\\mathrm{{cMpc^{-1}}}]$')
         # axes[4, i].legend(fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='lower left')
@@ -168,6 +173,6 @@ if __name__ == '__main__':
     axes[4, 0].set_ylabel(r'$\Delta^2(k)$ [${\rm mK^2}$]')
     axes[4, 0].set_ylim(1e-0, 1e3)
 
-    save_img_path = os.path.join(current_dir, 'arbitrary_scaling.pdf')
+    save_img_path = os.path.join(current_dir, 'plots', f'arbitrary_scaling_Npix{Npix}.png')
     plt.savefig(save_img_path, bbox_inches='tight')
     plt.close(fig)
