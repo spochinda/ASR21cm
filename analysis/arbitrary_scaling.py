@@ -19,22 +19,23 @@ from basicsr.utils.options import ordered_yaml
 if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     Npix = 512
     IC = 0
 
     T21_hr = loadmat(os.path.join(root_dir, f'datasets/varying_IC/T21_cubes/T21_cube_z18__Npix{Npix}_IC{IC}.mat'))['Tlin']
-    T21_hr = torch.from_numpy(T21_hr).unsqueeze(0).unsqueeze(0).to(torch.float32)  # Convert to BCHWD
+    T21_hr = torch.from_numpy(T21_hr).unsqueeze(0).unsqueeze(0).to(torch.float32).to(device)  # Convert to BCHWD format
 
     delta = loadmat(os.path.join(root_dir, f'datasets/varying_IC/IC_cubes/delta_Npix{Npix}_IC{IC}.mat'))['delta']
-    delta = torch.from_numpy(delta).unsqueeze(0).unsqueeze(0).to(torch.float32)  # Convert to BCHWD format
+    delta = torch.from_numpy(delta).unsqueeze(0).unsqueeze(0).to(torch.float32).to(device)  # Convert to BCHWD format
     delta, _, _ = utils.normalize(delta, mode='standard')
     vbv = loadmat(os.path.join(root_dir, f'datasets/varying_IC/IC_cubes/vbv_Npix{Npix}_IC{IC}.mat'))['vbv']
-    vbv = torch.from_numpy(vbv).unsqueeze(0).unsqueeze(0).to(torch.float32)  # Convert to BCHWD format
+    vbv = torch.from_numpy(vbv).unsqueeze(0).unsqueeze(0).to(torch.float32).to(device)  # Convert to BCHWD format
     vbv, _, _ = utils.normalize(vbv, mode='standard')
     z = torch.tensor([
         18.,
-    ])  # Example z vector
+    ]).to(device)  # Example z vector
 
     print(f'delta shape: {delta.shape}', flush=True)
     print(f'vbv shape: {vbv.shape}', flush=True)
@@ -44,21 +45,22 @@ if __name__ == '__main__':
         opt = yaml.load(f, Loader=ordered_yaml()[0])
     opt['rank'], opt['world_size'] = get_dist_info()
     opt['is_train'] = False
-    opt['num_gpu'] = 0
     results_root = os.path.join(root_dir, 'results', opt['name'])
     opt['path']['results_root'] = results_root
     opt['path']['log'] = results_root
     opt['path']['visualization'] = os.path.join(results_root, 'visualization')
+    opt['num_gpu'] = torch.cuda.device_count()
 
     net_g = build_network(opt['network_g'])
     load_path = os.path.join(root_dir, 'good_experiments/ASR21cm_GAN_z_conditional_3/models/net_g_2000.pth')
-    load_net = torch.load(load_path, map_location=lambda storage, loc: storage)
+    load_net = torch.load(load_path, map_location=device)
     net_g.load_state_dict(load_net['params_ema'], strict=True)
+    net_g = net_g.to(device)
 
     b, c, h, w, d = T21_hr.shape
     xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)
     xyz_hr = xyz_hr.view(1, -1, 3)
-    xyz_hr = xyz_hr.repeat(b, 1, 1)
+    xyz_hr = xyz_hr.repeat(b, 1, 1).to(device)
 
     # sizes = [64, 77, 96, 128] # for 256
     sizes = (Npix * 3 / np.array([12, 10, 8, 6])).round().astype(int)  # for 512
@@ -73,6 +75,7 @@ if __name__ == '__main__':
         input, _, _ = utils.normalize(input, mode='standard')
 
         with torch.no_grad():
+            print(f"devices: {net_g.device}, input: {input.device}, xyz_hr: {xyz_hr.device}, delta: {delta.device}, vbv: {vbv.device}, z: {z.device}", flush=True)
             output, _ = net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z)
             T21_sr.append(output * input_std + input_mean)
             input = input * input_std + input_mean  # denormalize input
@@ -82,8 +85,8 @@ if __name__ == '__main__':
 
     T21_lr = torch.concat(T21_lr, dim=0)
     T21_sr = torch.concat(T21_sr, dim=0)
-    torch.save(T21_sr, os.path.join(current_dir, 'T21_sr.pt'))
-    # T21_sr = torch.load(os.path.join(current_dir, 'T21_sr.pt'))
+    torch.save(T21_sr, os.path.join(current_dir, 'files', 'T21_sr.pt'))
+    # T21_sr = torch.load(os.path.join(current_dir, 'files', 'T21_sr.pt'))
     print(f'T21_sr shape: {T21_sr.shape}', flush=True)
     print(f'T21_lr shape: {T21_lr.shape}', flush=True)
 
