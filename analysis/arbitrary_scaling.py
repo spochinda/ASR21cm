@@ -75,8 +75,8 @@ if __name__ == '__main__':
         input, _, _ = utils.normalize(input, mode='standard')
 
         with torch.no_grad():
-            print(f"devices: {net_g.device}, input: {input.device}, xyz_hr: {xyz_hr.device}, delta: {delta.device}, vbv: {vbv.device}, z: {z.device}", flush=True)
-            output, _ = net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z)
+            # output, _ =  net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z)
+            output = torch.rand_like(delta)
             T21_sr.append(output * input_std + input_mean)
             input = input * input_std + input_mean  # denormalize input
             input = torch.nn.functional.interpolate(input, size=Npix, mode='trilinear')  # upsample input to match output size
@@ -85,8 +85,11 @@ if __name__ == '__main__':
 
     T21_lr = torch.concat(T21_lr, dim=0)
     T21_sr = torch.concat(T21_sr, dim=0)
-    torch.save(T21_sr, os.path.join(current_dir, 'files', 'T21_sr.pt'))
-    # T21_sr = torch.load(os.path.join(current_dir, 'files', 'T21_sr.pt'))
+    # torch.save(T21_sr, os.path.join(current_dir, 'files', 'T21_sr.pt'))
+
+    # T21_lr = torch.load(os.path.join(current_dir, 'files', 'T21_lr.pt'))  # Load the saved low-res data
+    T21_sr = torch.load(os.path.join(current_dir, 'files', 'T21_sr.pt'))  # Load the saved super-resolved data
+
     print(f'T21_sr shape: {T21_sr.shape}', flush=True)
     print(f'T21_lr shape: {T21_lr.shape}', flush=True)
 
@@ -123,7 +126,7 @@ if __name__ == '__main__':
             if row < 3:
                 axes[row, col].tick_params(labelbottom=False)  # Hides x tick labels only for this axis
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    slice_idx = 128
+    slice_idx = Npix // 2  # Middle slice for visualization
     vmin = T21_sr.min()  # torch.quantile(T21_sr, 0.01).item()
     vmax = T21_sr.max()  # torch.quantile(T21_sr, 0.99).item()
     k_hr, dsq_hr = calculate_power_spectrum(data_x=T21_hr, Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
@@ -134,9 +137,9 @@ if __name__ == '__main__':
 
         axes[0, i].imshow(T21_hr[0, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
         axes[0, i].set_title('HR')
-        axes[1, i].imshow(T21_sr[i][0, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
+        axes[1, i].imshow(T21_sr[i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
         axes[1, i].set_title('SR')
-        axes[2, i].imshow(T21_lr[i][0, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
+        axes[2, i].imshow(T21_lr[i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax, rasterized=rasterized)
         axes[2, i].set_title('LR Interpolated (LRI)')
 
         xmin = min(T21_sr[i].min(), T21_hr.min())
@@ -174,8 +177,8 @@ if __name__ == '__main__':
     axes[3, 0].set_xlim(-250, -50)
     axes[3, 0].set_ylim(0, 0.06)
     axes[4, 0].set_ylabel(r'$\Delta^2(k)$ [${\rm mK^2}$]')
-    axes[4, 0].set_ylim(1e-0, 1e3)
+    axes[4, 0].set_ylim(1e-1, 1e3)
 
-    save_img_path = os.path.join(current_dir, 'plots', f'arbitrary_scaling_Npix{Npix}.png')
+    save_img_path = os.path.join(current_dir, 'plots', f'arbitrary_scaling_Npix{Npix}.pdf')
     plt.savefig(save_img_path, bbox_inches='tight')
     plt.close(fig)
