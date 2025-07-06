@@ -3,6 +3,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.stats import gaussian_kde
+from scipy.integrate import simpson as simps
 import os
 import SR21cm.utils as utils
 import torch
@@ -16,6 +18,39 @@ from ASR21cm.archs.arch_utils import make_coord
 from basicsr.archs import build_network
 from basicsr.utils.dist_util import get_dist_info
 from basicsr.utils.options import ordered_yaml
+
+def calculate_KL_divergence(vol1, vol2, num_bins=100, epsilon=1e-10):
+    """
+    vol1: Target volume (ground truth)
+    vol2: Predicted volume
+    num_bins: Number of bins for histogram
+    epsilon: Small value to avoid division by zero
+    Returns: KL divergence D_KL(P || Q) where P is the histogram of vol1 and Q is the histogram of vol2
+    """
+    # Flatten volumes
+    vol1 = vol1.flatten()
+    vol2 = vol2.flatten()
+
+    # Get min/max range across both volumes
+    vmin = torch.min(torch.cat([vol1, vol2]))
+    vmax = torch.max(torch.cat([vol1, vol2]))
+
+    # Histogram as PDF (density=True)
+    hist1 = torch.histc(vol1, bins=num_bins, min=vmin.item(), max=vmax.item())
+    hist2 = torch.histc(vol2, bins=num_bins, min=vmin.item(), max=vmax.item())
+
+    # Add epsilon and normalize to get proper PDFs
+    P = hist1 + epsilon
+    Q = hist2 + epsilon
+
+    P /= P.sum()
+    Q /= Q.sum()
+
+    # KL divergence: D_KL(P || Q)
+    kl = torch.nn.functional.kl_div(Q.log(), P, reduction='sum')  # input=log(Q), target=P
+
+    return kl
+
 
 
 def plot_rmse_heatmap(data, sizes, redshifts, log=False, title='RMSE Heatmap', label='RMSE', cmap='viridis', hatch=None, legend=None, savefig=None, fig=None, ax=None, vmin=None, vmax=None):
@@ -109,26 +144,37 @@ if __name__ == '__main__':
         opt['path']['log'] = results_root
         opt['path']['visualization'] = os.path.join(results_root, 'visualization')
 
-        device = 'cuda'
-        net_g = build_network(opt['network_g']).to(device=device)
-        load_path = os.path.join(root_dir, 'good_experiments/ASR21cm_GAN_z_conditional_3/models/net_g_2000.pth')
-        load_net = torch.load(load_path, map_location='cuda')
-        net_g.load_state_dict(load_net['params_ema'], strict=True)
-        net_g = net_g.to(device=device)
-        net_g.eval()
+    device = 'cuda'
+    net_g = build_network(opt['network_g']).to(device=device)
+    load_path = os.path.join(root_dir, 'good_experiments/ASR21cm_GAN_z_conditional_3/models/net_g_2000.pth')
+    load_net = torch.load(load_path, map_location=device)
+    net_g.load_state_dict(load_net['params_ema'], strict=True)
+    net_g = net_g.to(device=device)
+    net_g.eval()
+
 
         sizes = [32, 38, 48, 64, 77, 96, 128]
         redshifts = range(14, 25)
         ICs = range(80)
 
-        xyz_hr = make_coord([256, 256, 256], ranges=None, flatten=False).to(device=device)
-        xyz_hr = xyz_hr.view(1, -1, 3)
-        xyz_hr = xyz_hr.repeat(1, 1, 1)
+    xyz_hr = make_coord([256, 256, 256], ranges=None, flatten=False).to(device=device)
+    xyz_hr = xyz_hr.view(1, -1, 3)
+    xyz_hr = xyz_hr.repeat(1, 1, 1)
 
-        RMSE_sr = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
-        RMSE_sr_dsq = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
-        RMSE_lr = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
-        RMSE_lr_dsq = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    global_signal_hr = torch.zeros((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    std_hr = torch.zeros((len(ICs), len(sizes), len(redshifts))).to(device=device)
+
+    RMSE_sr = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    RMSE_sr_dsq = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    DKL_sr = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    global_signal_sr = torch.zeros((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    std_sr = torch.zeros((len(ICs), len(sizes), len(redshifts))).to(device=device)
+
+    RMSE_lr = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    RMSE_lr_dsq = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    DKL_lr = torch.empty((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    global_signal_lr = torch.zeros((len(ICs), len(sizes), len(redshifts))).to(device=device)
+    std_lr = torch.zeros((len(ICs), len(sizes), len(redshifts))).to(device=device)
 
         progress_bar = tqdm(total=len(ICs) * len(sizes) * len(redshifts), desc='Processing', unit='cube')
 
@@ -159,31 +205,61 @@ if __name__ == '__main__':
                         # T21_sr = torch.randn_like(T21_hr)
                         T21_sr = T21_sr * T21_lr_std + T21_lr_mean
 
-                        T21_lr = T21_lr * T21_lr_std + T21_lr_mean  # denormalize input
-                        T21_lr = torch.nn.functional.interpolate(T21_lr, size=256, mode='trilinear')  # upsample input to match output size
+                    T21_lr = T21_lr * T21_lr_std + T21_lr_mean  # denormalize input
 
-                        k_hr, dsq_hr = calculate_power_spectrum(data_x=T21_hr, Lpix=3, kbins=100, dsq=True, method='torch', device='cuda')
-                        k_sr, dsq_sr = calculate_power_spectrum(data_x=T21_sr, Lpix=3, kbins=100, dsq=True, method='torch', device='cuda')
-                        k_lr, dsq_lr = calculate_power_spectrum(data_x=T21_lr, Lpix=3, kbins=100, dsq=True, method='torch', device='cuda')
+                    T21_lr = torch.nn.functional.interpolate(T21_lr, size=256, mode='trilinear')  # upsample input to match output size
+                    DKL_sr[i, j, k] = calculate_KL_divergence(T21_hr, T21_sr).item()
+                    DKL_lr[i, j, k] = calculate_KL_divergence(T21_hr, T21_lr).item()
+
+                    global_signal_hr[i, j, k] = torch.mean(T21_hr).item()
+                    global_signal_sr[i, j, k] = torch.mean(T21_sr).item()
+                    global_signal_lr[i, j, k] = torch.mean(T21_lr).item()
+
+                    std_hr[i, j, k] = torch.std(T21_hr).item()
+                    std_sr[i, j, k] = torch.std(T21_sr).item()
+                    std_lr[i, j, k] = torch.std(T21_lr).item()
 
                         rmse_sr = torch.sqrt(torch.mean((T21_sr - T21_hr)**2))
                         rmse_lr = torch.sqrt(torch.mean((T21_lr - T21_hr)**2))
                         RMSE_sr[i, j, k] = rmse_sr.item()
                         RMSE_lr[i, j, k] = rmse_lr.item()
 
-                        rmse_sr_dsq = torch.sqrt(torch.nanmean((dsq_sr - dsq_hr)**2))
-                        rmse_lr_dsq = torch.sqrt(torch.nanmean((dsq_lr - dsq_hr)**2))
-                        RMSE_sr_dsq[i, j, k] = rmse_sr_dsq.item()
-                        RMSE_lr_dsq[i, j, k] = rmse_lr_dsq.item()
+                    k_hr, dsq_hr = calculate_power_spectrum(data_x=T21_hr, Lpix=3, kbins=100, dsq=True, method='torch', device=device)
+                    k_sr, dsq_sr = calculate_power_spectrum(data_x=T21_sr, Lpix=3, kbins=100, dsq=True, method='torch', device=device)
+                    k_lr, dsq_lr = calculate_power_spectrum(data_x=T21_lr, Lpix=3, kbins=100, dsq=True, method='torch', device=device)
+                    rmse_sr_dsq = torch.sqrt(torch.nanmean((dsq_sr - dsq_hr) ** 2))
+                    rmse_lr_dsq = torch.sqrt(torch.nanmean((dsq_lr - dsq_hr) ** 2))
+                    RMSE_sr_dsq[i, j, k] = rmse_sr_dsq.item()
+                    RMSE_lr_dsq[i, j, k] = rmse_lr_dsq.item()
+
+                    # Compute DKL for super-resolved and low-resolved outputs
+                    T21_sr = T21_sr.squeeze(dim=(0,1)).cpu().numpy()
+                    T21_lr = T21_lr.squeeze(dim=(0,1)).cpu().numpy()
+                    T21_hr = T21_hr.squeeze(dim=(0,1)).cpu().numpy()
+
+
+
+
+
+
+
 
                     torch.cuda.empty_cache()
                     progress_bar.update(1)
 
-        idx = 3
-        torch.save(RMSE_sr, os.path.join(current_dir, f'RMSE_sr_{idx}.pt'))
-        torch.save(RMSE_sr_dsq, os.path.join(current_dir, f'RMSE_sr_dsq_{idx}.pt'))
-        torch.save(RMSE_lr, os.path.join(current_dir, f'RMSE_lr_{idx}.pt'))
-        torch.save(RMSE_lr_dsq, os.path.join(current_dir, f'RMSE_lr_dsq_{idx}.pt'))
+    idx = 4
+    torch.save(RMSE_sr, os.path.join(current_dir, 'files', f'RMSE_sr_{idx}.pt'))
+    torch.save(RMSE_sr_dsq, os.path.join(current_dir, 'files', f'RMSE_sr_dsq_{idx}.pt'))
+    torch.save(RMSE_lr, os.path.join(current_dir, 'files', f'RMSE_lr_{idx}.pt'))
+    torch.save(RMSE_lr_dsq, os.path.join(current_dir, 'files', f'RMSE_lr_dsq_{idx}.pt'))
+    torch.save(DKL_sr, os.path.join(current_dir, 'files', f'DKL_sr_{idx}.pt'))
+    torch.save(DKL_lr, os.path.join(current_dir, 'files', f'DKL_lr_{idx}.pt'))
+    torch.save(global_signal_hr, os.path.join(current_dir, 'files', f'global_signal_hr_{idx}.pt'))
+    torch.save(global_signal_sr, os.path.join(current_dir, 'files', f'global_signal_sr_{idx}.pt'))
+    torch.save(global_signal_lr, os.path.join(current_dir, 'files', f'global_signal_lr_{idx}.pt'))
+    torch.save(std_hr, os.path.join(current_dir, 'files', f'std_hr_{idx}.pt'))
+    torch.save(std_sr, os.path.join(current_dir, 'files', f'std_sr_{idx}.pt'))
+    torch.save(std_lr, os.path.join(current_dir, 'files', f'std_lr_{idx}.pt'))
 
     else:
         metric1_sr = torch.load(os.path.join(current_dir, 'files', 'DKL_sr_4.pt'), map_location='cpu')
@@ -324,3 +400,12 @@ if __name__ == '__main__':
         plot_rmse_heatmap(metric3_ratio, sizes=sizes, redshifts=redshifts, log=True, title=None, label=r'$\mathrm{{RMSE}}_{{\mathrm{{SR}}}}^{{\bar{{T}}_{{21}}}}\ /\ \mathrm{{RMSE}}_{{\mathrm{{LRI}}}}^{{\bar{{T}}_{{21}}}}$', cmap='coolwarm', hatch=True, savefig=os.path.join(current_dir, 'RMSE_heatmaps.pdf'), fig=fig, ax=axes[2, 2], vmin=vmin_ratio, vmax=vmax_ratio)
         # plt.tight_layout()
         # plt.show()
+
+    print(f'DKL_sr: {DKL_sr.mean(dim=(0))}')
+    print(f'DKL_lr: {DKL_lr.mean(dim=(0))}')
+    print(f'global_signal_hr: {global_signal_hr.mean(dim=(0))}')
+    print(f'global_signal_sr: {global_signal_sr.mean(dim=(0))}')
+    print(f'global_signal_lr: {global_signal_lr.mean(dim=(0))}')
+    print(f'std_hr: {std_hr.mean(dim=(0))}')
+    print(f'std_sr: {std_sr.mean(dim=(0))}')
+    print(f'std_lr: {std_lr.mean(dim=(0))}')
