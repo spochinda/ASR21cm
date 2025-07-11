@@ -151,14 +151,14 @@ if __name__ == '__main__':
         axes[3, i].set_xlabel('$T_{21}$ [$\\mathrm{mK}$]')
         rmse_sr = torch.sqrt(torch.mean((T21_sr[i:i + 1] - T21_hr)**2))
         rmse_lr = torch.sqrt(torch.mean((T21_lr[i:i + 1] - T21_hr)**2))
-        axes[3, i].text(0.05, 0.95, rf's={Npix / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[3, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+        axes[3, i].text(0.05, 0.95, rf's={Npix / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}^{{T_{{21}}}}_{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}^{{T_{{21}}}}_{{LRI}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[3, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
 
         axes[4, i].loglog(k_hr, dsq_hr[0, 0], label='$T_{{21}}$ HR', ls='solid', lw=2, rasterized=rasterized, zorder=2, color=colors[0])
         axes[4, i].loglog(k_sr, dsq_sr[0, 0], label='$T_{{21}}$ SR', ls='solid', lw=2, rasterized=rasterized, zorder=3, color=colors[1])
         axes[4, i].loglog(k_lr, dsq_lr[0, 0], label='$T_{{21}}$ LRI', ls='solid', lw=2, rasterized=rasterized, zorder=1, color=colors[2])
         RMSE_dsq_sr = torch.sqrt(torch.nanmean((dsq_sr - dsq_hr)**2))
         RMSE_dsq_lr = torch.sqrt(torch.nanmean((dsq_lr - dsq_hr)**2))
-        axes[4, i].text(0.05, 0.95, rf's={Npix / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}_{{SR}}^{{\Delta^2}} = {RMSE_dsq_sr.item():.2f}\ \mathrm{{mK}}^2$' + '\n' + rf'$\mathrm{{RMSE}}_{{LR}}^{{\Delta^2}} = {RMSE_dsq_lr.item():.2f}\ \mathrm{{mK}}^2$', transform=axes[4, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+        axes[4, i].text(0.05, 0.95, rf's={Npix / size:.2f}, z={z[0].item():.0f}' + '\n' + rf'$\mathrm{{RMSE}}^{{\Delta^2}}_{{SR}} = {RMSE_dsq_sr.item():.2f}\ \mathrm{{mK}}^2$' + '\n' + rf'$\mathrm{{RMSE}}^{{\Delta^2}}_{{LRI}} = {RMSE_dsq_lr.item():.2f}\ \mathrm{{mK}}^2$', transform=axes[4, i].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
 
         axes[4, i].set_xlabel('$k\\ [\\mathrm{{cMpc^{-1}}}]$')
         # axes[4, i].legend(fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='lower left')
