@@ -1,0 +1,107 @@
+# general settings
+name: diffusion
+model_type: ScoreDiffusionVPSDEModel
+num_gpu: auto  # set num_gpu: 0 for cpu mode
+manual_seed: 0
+
+beta_max: 20.0
+beta_min: 0.
+epsilon_t: !!float 1e-5
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: T21train
+    type: FixedScale21cmDataset
+    dataroot_gt: datasets/varying_IC/T21_cubes
+    dataroot_IC: datasets/varying_IC/IC_cubes
+    scale: 4
+    redshifts: [14,]
+    IC_seeds: [20,]
+    gt_size: 64
+    Npix: 256
+    io_backend:
+      type: disk
+
+    # data loader
+    use_shuffle: true
+    num_worker_per_gpu: 3
+    batch_size_per_gpu: 1
+    dataset_enlarge_ratio: 10
+    prefetch_mode: ~
+
+  val:
+    name: T21val
+    type: FixedScale21cmDataset
+    dataroot_gt: datasets/varying_IC/T21_cubes
+    dataroot_IC: datasets/varying_IC/IC_cubes
+    redshifts: [14,]
+    IC_seeds: [20,]
+    gt_size: 64
+    Npix: 256
+    io_backend:
+      type: disk
+
+# network structures
+network_g:
+  # hr_size: 128 # Npix / 2**cut_factor
+  type: SongUNet
+  img_resolution: 64
+  in_channels: 4
+  out_channels: 1
+  label_dim: 0
+  augment_dim: 0
+  model_channels: 4
+  channel_mult: [1,2,4,8]
+  num_blocks: 2
+  attn_resolutions: [8]
+
+# path
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+# training settings
+train:
+  optim_g:
+    type: Adam
+    lr: !!float 1e-4
+    weight_decay: !!float 1e-3
+    betas: [0.9, 0.99]
+
+  scheduler:
+    type: MultiStepLR
+    milestones: [50000]
+    gamma: 0.5
+
+  total_iter: 100000
+  warmup_iter: -1  # no warm up
+
+  # losses
+  pixel_opt:
+    type: VPLoss #MSELoss
+    #reduction: sum
+
+# validation settings (temporarily disabled)
+val:
+ val_freq: !!float 5e3
+ save_img: true
+ metrics:
+  rmse:
+    type: calculate_rmse
+    better: 'lower'
+
+# logging settings
+logger:
+  print_freq: 1
+  save_checkpoint_freq: !!float 5e3
+  use_tb_logger: true
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+dist_params:
+  backend: nccl
+  port: 29500
