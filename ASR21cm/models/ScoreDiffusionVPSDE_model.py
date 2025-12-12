@@ -40,6 +40,8 @@ class ScoreDiffusionVPSDEModel(SRModel):
         self.beta_max = opt.get('beta_max', 20.)
         self.beta_min = opt.get('beta_min', 0.1)
         self.epsilon_t = opt.get('epsilon_t', 1e-5)
+        # Gradient clipping
+        self.grad_clip = opt['train'].get('grad_clip', None) if 'train' in opt else None
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device)
@@ -73,6 +75,11 @@ class ScoreDiffusionVPSDEModel(SRModel):
             loss_dict['l_pix'] = l_pix
 
         l_total.backward()
+
+        # Gradient clipping
+        if self.grad_clip is not None:
+            torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), self.grad_clip)
+
         self.optimizer_g.step()
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
@@ -248,7 +255,8 @@ class ScoreDiffusionVPSDEModel(SRModel):
             eps = torch.randn_like(x)
 
             # Euler-Maruyama: going backwards means subtracting the forward drift
-            x = x - (f_drift - g_diffusion**2 * score) * dt + g_diffusion * torch.sqrt(dt) * eps
+            # x = x - (f_drift - g_diffusion**2 * score) * dt + g_diffusion * torch.sqrt(dt) * eps
+            x = x - f_drift * dt + g_diffusion**2 * score * dt + g_diffusion * torch.sqrt(dt) * eps
 
             self.output = x
 
@@ -281,24 +289,11 @@ class ScoreDiffusionVPSDEModel(SRModel):
         g_diffusion = torch.sqrt(beta_t)
         return g_diffusion
 
-    def sde(self, x, t):
-        b, *d = x.shape
-        beta_t = (self.beta_min + t * (self.beta_max - self.beta_min)).view(b, *[1] * len(d)).to(x.device)
-        drift = -0.5 * beta_t * x
-        diffusion = torch.sqrt(beta_t)
-        return drift, diffusion
-
-    def rsde(self, x, t, score, probability_flow=False):
-        """Create the drift and diffusion functions for the reverse SDE/ODE."""
-        drift, diffusion = self.sde(x, t)
-        # score = self.score_fn(t, model_output)
-        drift = drift - diffusion**2 * score * (0.5 if probability_flow else 1.)
-        # Set the diffusion function to zero for ODEs.
-        diffusion = torch.zeros_like(diffusion) if probability_flow else diffusion
-        return drift, diffusion
-
-    def marginal_prob(self, x, t):
-        C = self.C_t(t)
-        mean = torch.exp(C) * x
-        std = torch.sqrt(1. - torch.exp(2. * C))
-        return mean, std
+    def get_optimizer(self, optim_type, params, lr, **kwargs):
+        if optim_type == 'Adam':
+            optimizer = torch.optim.Adam(params, lr, **kwargs)
+        elif optim_type == 'AdamW':
+            optimizer = torch.optim.AdamW(params, lr, **kwargs)
+        else:
+            raise NotImplementedError(f'optimizer {optim_type} is not supperted yet.')
+        return optimizer

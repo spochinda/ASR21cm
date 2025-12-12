@@ -10,7 +10,9 @@ class VPLoss(torch.nn.Module):
         super(VPLoss, self).__init__()
 
     def forward(self, score, std, gt, gt_noisy):
+        b, c, h, w, d = gt.shape
         loss = torch.norm(score * std + (gt_noisy - gt) / std, p=2, dim=(1, 2, 3, 4))**2
+        loss = loss / (h * w * d)
         loss = torch.mean(loss)
         return loss
 
