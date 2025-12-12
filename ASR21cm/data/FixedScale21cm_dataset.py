@@ -140,9 +140,9 @@ class FixedScale21cmDataset(data.Dataset):
 
         for index, row in self.df.iterrows():
 
-            T21_file = os.path.join(self.path_T21, row['T21'])
-            delta_file = os.path.join(self.path_IC, row['delta'])
-            vbv_file = os.path.join(self.path_IC, row['vbv'])
+            T21_file = row['T21']
+            delta_file = row['delta']
+            vbv_file = row['vbv']
             label = row['labels (z)']
 
             T21_cube = loadmat(T21_file)['Tlin']
