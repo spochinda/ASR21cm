@@ -11,6 +11,7 @@ from basicsr.metrics import calculate_metric
 from basicsr.models.sr_model import SRModel
 from basicsr.utils import get_root_logger
 from basicsr.utils.registry import MODEL_REGISTRY
+from ASR21cm.utils import calculate_power_spectrum
 
 
 @MODEL_REGISTRY.register()
@@ -62,7 +63,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
         x = torch.cat([gt_noisy, self.lq, self.delta, self.vbv], dim=1)
 
         self.optimizer_g.zero_grad()
-        score = self.net_g(x=x, noise_labels=t, class_labels=None, augment_labels=None)
+        eps_theta = self.net_g(x=x, noise_labels=t, class_labels=None, augment_labels=None)
         std = self.sigma_t(t)
         # score = -eps_theta / std.view(b,c,*[1]*len(d))
 
@@ -70,7 +71,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
         loss_dict = OrderedDict()
         # pixel loss
         if self.cri_pix:
-            l_pix = self.cri_pix(score, std, self.gt, gt_noisy)
+            l_pix = self.cri_pix(eps_theta, std, self.gt, gt_noisy, eps)
             l_total += l_pix
             loss_dict['l_pix'] = l_pix
 
@@ -88,7 +89,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
             self.model_ema(decay=self.ema_decay)
 
     def _save_validation_plot(self, metric_data, dataset_name, current_iter, sample_idx):
-        """Save visualization plot with SR/HR slices and histogram comparison.
+        """Save visualization plot with SR/HR slices, histogram, and power spectrum comparison.
 
         Args:
             metric_data: Dictionary containing 'sr', 'hr', 'mean', 'std'
@@ -116,8 +117,8 @@ class ScoreDiffusionVPSDEModel(SRModel):
         vmin = hr_denorm.min()
         vmax = hr_denorm.max()
 
-        # Create figure
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        # Create figure with 4 panels
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
 
         # Plot SR slice
         im0 = axes[0].imshow(sr_slice, cmap='viridis', vmin=vmin, vmax=vmax)
@@ -141,6 +142,30 @@ class ScoreDiffusionVPSDEModel(SRModel):
         axes[2].set_ylabel('Density')
         axes[2].legend()
         axes[2].grid(True, alpha=0.3)
+
+        # Calculate and plot power spectra
+        # Convert to torch tensors and add batch/channel dimensions
+        sr_tensor = torch.from_numpy(sr_denorm).unsqueeze(0).unsqueeze(0).float()
+        hr_tensor = torch.from_numpy(hr_denorm).unsqueeze(0).unsqueeze(0).float()
+
+        # Calculate power spectra using torch method
+        k_vals_sr, P_k_sr = calculate_power_spectrum(sr_tensor, Lpix=3, kbins=50, dsq=True, method="torch", device="cpu")
+        k_vals_hr, P_k_hr = calculate_power_spectrum(hr_tensor, Lpix=3, kbins=50, dsq=True, method="torch", device="cpu")
+
+        # Convert to numpy for plotting
+        k_vals_sr = k_vals_sr.cpu().numpy()
+        P_k_sr = P_k_sr.squeeze().cpu().numpy()
+        k_vals_hr = k_vals_hr.cpu().numpy()
+        P_k_hr = P_k_hr.squeeze().cpu().numpy()
+
+        # Plot power spectra
+        axes[3].loglog(k_vals_sr, P_k_sr, label='SR', alpha=0.7, linewidth=2)
+        axes[3].loglog(k_vals_hr, P_k_hr, label='HR', alpha=0.7, linewidth=2)
+        axes[3].set_title('Power Spectrum Comparison')
+        axes[3].set_xlabel('k [Mpc$^{-1}$]')
+        axes[3].set_ylabel('$\\Delta^2(k)$ [mK$^2$]')
+        axes[3].legend()
+        axes[3].grid(True, alpha=0.3, which='both')
 
         plt.tight_layout()
 
@@ -171,7 +196,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
 
         for idx, val_data in enumerate(dataloader):
             self.feed_data(val_data)
-            self.test(x_lr=self.lq, conditionals=[self.delta, self.vbv], class_labels=None, num_steps=50, verbose=True)
+            self.test(x_lr=self.lq, conditionals=[self.delta, self.vbv], class_labels=None, num_steps=40, verbose=True)
 
             metric_data['sr'] = self.output.detach().cpu()
             metric_data['hr'] = self.gt.detach().cpu()
@@ -240,12 +265,15 @@ class ScoreDiffusionVPSDEModel(SRModel):
             if hasattr(self, 'net_g_ema'):
                 self.net_g_ema.eval()
                 with torch.no_grad():
-                    score = self.net_g_ema(x=X, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
+                    eps_theta = self.net_g_ema(x=X, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
             else:
                 self.net_g.eval()
                 with torch.no_grad():
-                    score = self.net_g(x=X, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
+                    eps_theta = self.net_g(x=X, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
                 self.net_g.train()
+
+            std = self.sigma_t(batch_time_step)
+            score = -eps_theta / std
 
             # Reverse-time SDE: dx = [f(x,t) - g(t)²*score(x,t)] * (-dt) + g(t) dw
             # With dt > 0, this becomes: x + [f - g²*score] * (-dt)
