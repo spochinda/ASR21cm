@@ -1,5 +1,5 @@
 # general settings
-name: diffusion
+name: diffusion_eps_theta_fixed_attn_L
 model_type: ScoreDiffusionVPSDEModel
 num_gpu: 1  # Using 1 GPU - multi-GPU overhead too high for small model
 manual_seed: 0
@@ -16,8 +16,8 @@ datasets:
     dataroot_gt: datasets/varying_IC/T21_cubes
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
-    redshifts: [14,]
-    IC_seeds: [20,]
+    redshifts: [10,]
+    IC_seeds: [0,]
     gt_size: 128
     Npix: 256
     load_full_dataset: true
@@ -36,8 +36,8 @@ datasets:
     type: FixedScale21cmDataset
     dataroot_gt: datasets/varying_IC/T21_cubes
     dataroot_IC: datasets/varying_IC/IC_cubes
-    redshifts: [14,]
-    IC_seeds: [20,]
+    redshifts: [10,]
+    IC_seeds: [1,]
     gt_size: 128
     Npix: 256
     io_backend:
@@ -53,7 +53,7 @@ network_g:
   augment_dim: 0
   model_channels: 8
   channel_mult: [1,2,4,8,16]
-  num_blocks: 2
+  num_blocks: 4
   attn_resolutions: [8,]  # Attention at innermost level
 
 # path
@@ -66,13 +66,13 @@ path:
 train:
   optim_g:
     type: AdamW
-    lr: !!float 1e-4
-    weight_decay: !!float 1e-4
-    betas: [0.9, 0.99]
+    lr: !!float 4e-4
+    weight_decay: !!float 1e-5
+    betas: [0.9, 0.999]
 
   scheduler:
     type: MultiStepLR
-    milestones: [25000, 40000]
+    milestones: [6000, 18000, 24000, 30000, 36000]
     gamma: 0.5
 
   total_iter: 50000
@@ -86,7 +86,7 @@ train:
 
 # validation settings (temporarily disabled)
 val:
- val_freq: !!float 1e3
+ val_freq: !!float 2e3
  save_img: true
  metrics:
   rmse:
@@ -96,7 +96,7 @@ val:
 # logging settings
 logger:
   print_freq: 10
-  save_checkpoint_freq: !!float 1e3
+  save_checkpoint_freq: !!float 2e3
   use_tb_logger: true
   wandb:
     project: ~

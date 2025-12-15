@@ -59,12 +59,13 @@ class ScoreDiffusionVPSDEModel(SRModel):
         t = torch.cat([t, 1 - t + self.epsilon_t], dim=0)[:b]
         eps = torch.randn_like(self.gt, device=self.gt.device)
         C_t = self.C_t(t)
-        gt_noisy = self.gt * torch.exp(C_t) + (1. - torch.exp(2. * C_t)).sqrt() * eps
+        std = self.sigma_t(t)
+        gt_noisy = self.gt * torch.exp(C_t) + std * eps
         x = torch.cat([gt_noisy, self.lq, self.delta, self.vbv], dim=1)
 
         self.optimizer_g.zero_grad()
         eps_theta = self.net_g(x=x, noise_labels=t, class_labels=None, augment_labels=None)
-        std = self.sigma_t(t)
+
         # score = -eps_theta / std.view(b,c,*[1]*len(d))
 
         l_total = 0
@@ -196,7 +197,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
 
         for idx, val_data in enumerate(dataloader):
             self.feed_data(val_data)
-            self.test(x_lr=self.lq, conditionals=[self.delta, self.vbv], class_labels=None, num_steps=40, verbose=True)
+            self.test(x_lr=self.lq, conditionals=[self.delta, self.vbv], class_labels=None, num_steps=50, verbose=True)
 
             metric_data['sr'] = self.output.detach().cpu()
             metric_data['hr'] = self.gt.detach().cpu()
@@ -261,7 +262,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
 
         for time_step in tqdm(time_steps, desc='sampling', disable=not verbose):
             batch_time_step = torch.tensor(b * [time_step], device=x_lr.device)
-            X = torch.cat([x, *conditionals, x_lr], dim=1)
+            X = torch.cat([x, x_lr, *conditionals], dim=1)
             if hasattr(self, 'net_g_ema'):
                 self.net_g_ema.eval()
                 with torch.no_grad():
@@ -303,7 +304,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
         return beta_t
 
     def sigma_t(self, t):
-        sigma_t = torch.sqrt(1. - torch.exp(2. * self.C_t(t)))
+        sigma_t = (1. - torch.exp(2. * self.C_t(t))).sqrt()
         sigma_t = sigma_t
         return sigma_t
 

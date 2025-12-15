@@ -216,12 +216,29 @@ class UNetBlock(torch.nn.Module):
         x = x * self.skip_scale
 
         if self.num_heads:
-            q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1).unbind(2)
+            # OLD BUGGED CODE FOR 3D (works for 2D only):
+            # q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1).unbind(2)
             # w = AttentionOp.apply(q, k)
             # a = torch.einsum('nqk,nck->ncq', w, v)
             # x = self.proj(a.reshape(*x.shape)).add_(x)
-            x = torch.nn.functional.scaled_dot_product_attention(q, k, v).reshape(*x.shape)
-            x = self.proj(x).add_(x)
+            # x = torch.nn.functional.scaled_dot_product_attention(q, k, v).reshape(*x.shape)
+            # x = self.proj(x).add_(x)
+            # x = x * self.skip_scale
+
+            # FIXED CODE FOR 3D:
+            # For 3D input [B, C, D, H, W], we need to properly handle spatial dimensions
+            B, C, D, H, W = x.shape
+            qkv = self.qkv(self.norm2(x))  # [B, C*3, D, H, W]
+            # Reshape to separate out the 3 (Q,K,V), num_heads, and head_dim
+            qkv = qkv.reshape(B, 3, self.num_heads, C // self.num_heads, D * H * W)  # [B, 3, num_heads, head_dim, seq_len]
+            # Rearrange to [3, B, num_heads, seq_len, head_dim] for scaled_dot_product_attention
+            qkv = qkv.permute(1, 0, 2, 4, 3)  # [3, B, num_heads, seq_len, head_dim]
+            q, k, v = qkv.unbind(0)  # Each: [B, num_heads, seq_len, head_dim]
+            # Apply attention
+            attn_output = torch.nn.functional.scaled_dot_product_attention(q, k, v)  # [B, num_heads, seq_len, head_dim]
+            # Reshape back to [B, C, D, H, W]
+            attn_output = attn_output.permute(0, 1, 3, 2).reshape(B, C, D, H, W)  # [B, num_heads, head_dim, seq_len] -> [B, C, D, H, W]
+            x = self.proj(attn_output).add_(x)
             x = x * self.skip_scale
         return x
 
