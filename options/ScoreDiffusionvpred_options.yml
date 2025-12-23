@@ -1,6 +1,6 @@
 # general settings
-name: diffusion_eps_theta_L
-model_type: ScoreDiffusionVPSDEModel
+name: diffusion_vpred_L
+model_type: ScoreDiffusionVPSDEvpredModel
 num_gpu: 1  # Using 1 GPU - multi-GPU overhead too high for small model
 manual_seed: 0
 
@@ -82,7 +82,7 @@ train:
 
   # losses
   pixel_opt:
-    type: VPLoss #MSELoss
+    type: MSELoss
     #reduction: sum
 
 # validation settings (temporarily disabled)

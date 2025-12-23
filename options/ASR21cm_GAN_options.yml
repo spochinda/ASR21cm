@@ -1,5 +1,5 @@
 # general settings
-name: ASR21cm_GAN
+name: ASR21cm_GAN_z_conditional_3
 model_type: ESRASRGANModel
 scale:
 num_gpu: auto  # set num_gpu: 0 for cpu mode
@@ -10,22 +10,23 @@ datasets:
   train:
     name: T21train
     type: Custom21cmDataset
-    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes/
-    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes/
-    redshifts: [10,]
-    IC_seeds: [0,]
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/T21_cubes/
+    dataroot_IC: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/IC_cubes/
+    redshifts: [14,15,16,17,18,19,20,21]
+    IC_seeds: [0,1,2,3,4,5,6,7] # 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
     Npix: 256
     cut_factor: 2
     scale_max: 4.
     scale_min: 2.
     n_augment: 1
-    gt_size: 64
+    gt_size: 128
+    conditional_cubes: true
     io_backend:
       type: disk
 
     # data loader
     use_shuffle: true
-    num_worker_per_gpu: 8 # 32
+    num_worker_per_gpu: 24 # 32
     batch_size_per_gpu: 1
     dataset_enlarge_ratio: 1
     prefetch_mode: ~
@@ -33,16 +34,17 @@ datasets:
   val:
     name: T21val
     type: Custom21cmDataset
-    dataroot_gt: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/T21_cubes
-    dataroot_IC: /Users/simonpochinda/Documents/PhD/dataset/varying_IC/IC_cubes
-    redshifts: [10,]
-    IC_seeds: [1,]
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/T21_cubes
+    dataroot_IC: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_IC/IC_cubes
+    redshifts: [14,15,16,17,18,19,20,21]
+    IC_seeds: [20,]
     Npix: 256
     cut_factor: 0
     scale_max: 4.
     scale_min: 2.
     n_augment: 1
-    gt_size: 128
+    gt_size: 256
+    conditional_cubes: true
     io_backend:
       type: disk
 
@@ -52,12 +54,14 @@ network_g:
   ArSSR_opt:
     latent_dim: 32 #  4 # 8 # 32
     use_checkpoint: false
+    conditional_cubes: true
   encoder_opt:
     type: RDN
     num_features: 16 # 8 # consider reducing to 8
     growth_rate: 16 # 2
     num_blocks: 8 # 4
     num_layers: 3 # 4
+    redshift_embedding: true
   # encoder_opt:
   #  type: SongUNet
   #  in_channels: 1
@@ -77,9 +81,11 @@ network_g:
 
 network_d:
   type: VGGStyleDiscriminator3D
-  num_in_ch: 1
+  num_in_ch: 3
   num_feat: 32
-  input_size: 64
+  input_size: 128
+  redshift_embedding: true
+  conditional_cubes: true
 
 # path
 path:
@@ -103,7 +109,7 @@ train:
 
   scheduler:
     type: MultiStepLR
-    milestones: [5000, 10000, 20000, 30000]
+    milestones: [20000, 30000, 35000]
     gamma: 0.5
 
   total_iter: 40000
@@ -111,8 +117,8 @@ train:
 
   # losses
   pixel_opt:
-    type: MSELoss # L1Loss
-    loss_weight: !!float 1e-2
+    type: L1Loss # L1Loss MSELoss
+    loss_weight: !!float 1e-1 # 1e-2
     reduction: mean
 #  perceptual_opt:
 #    type: PerceptualLoss
@@ -129,10 +135,10 @@ train:
     gan_type: vanilla
     real_label_val: 1.0
     fake_label_val: 0.0
-    loss_weight: !!float 1e-2 # 5e-3
-  dsq_opt:
-    type: dsq_loss
-    loss_weight: !!float 1e-2
+    loss_weight: !!float 5e-3
+#  dsq_opt:
+#    type: dsq_loss
+#    loss_weight: !!float 5e-3
 
   net_d_iters: 1
   net_d_init_iters: 0
@@ -141,9 +147,9 @@ train:
 
 # validation settings
 val:
-  val_freq: !!float 50
+  val_freq: !!float 2000
   save_img: true
-  pbar: false
+  pbar: true
 
   metrics:
     rmse:
@@ -152,8 +158,8 @@ val:
 
 # logging settings
 logger:
-  print_freq: 10
-  save_checkpoint_freq: !!float 250
+  print_freq: 100
+  save_checkpoint_freq: !!float 2000
   use_tb_logger: true
   wandb:
     project: ~

@@ -16,7 +16,7 @@ from ASR21cm.utils import calculate_power_spectrum
 
 
 @MODEL_REGISTRY.register()
-class ScoreDiffusionVPSDEModel(SRModel):
+class ScoreDiffusionVPSDEvpredModel(SRModel):
     """Example model based on the SRModel class.
 
     In this example model, we want to implement a new model that trains with both L1 and L2 loss.
@@ -38,7 +38,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
     """
 
     def __init__(self, opt):
-        super(ScoreDiffusionVPSDEModel, self).__init__(opt)
+        super(ScoreDiffusionVPSDEvpredModel, self).__init__(opt)
         self.beta_max = opt.get('beta_max', 20.)
         self.beta_min = opt.get('beta_min', 0.1)
         self.epsilon_t = opt.get('epsilon_t', 1e-5)
@@ -62,18 +62,19 @@ class ScoreDiffusionVPSDEModel(SRModel):
         C_t = self.C_t(t)
         std = self.sigma_t(t)
         gt_noisy = self.gt * torch.exp(C_t) + std * eps
+        v_target = torch.exp(C_t) * eps - std * self.gt
+
         input = torch.cat([gt_noisy, self.lq, self.delta, self.vbv], dim=1)
 
         self.optimizer_g.zero_grad()
-        eps_theta = self.net_g(x=input, noise_labels=t, class_labels=None, augment_labels=None)
+        v_theta = self.net_g(x=input, noise_labels=t, class_labels=None, augment_labels=None)
 
-        # score = -eps_theta / std.view(b,c,*[1]*len(d))
 
         l_total = 0
         loss_dict = OrderedDict()
         # pixel loss
         if self.cri_pix:
-            l_pix = self.cri_pix(eps_theta, std, self.gt, gt_noisy, eps)
+            l_pix = self.cri_pix(v_target, v_theta)
             l_total += l_pix
             loss_dict['l_pix'] = l_pix
 
@@ -292,7 +293,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
             axes[2, i].set_xlabel('Value')
             axes[2, i].set_ylabel('Density')
             axes[2, i].grid(True, alpha=0.3)
-            axes[2, i].set_xlim(-5, 5)
+            axes[2, i].set_xlim(-12, 5)
             axes[2, i].legend(loc='upper right', fontsize=8)
 
             # Calculate and plot power spectra
@@ -413,20 +414,20 @@ class ScoreDiffusionVPSDEModel(SRModel):
         for time_step in tqdm(time_steps, desc='sampling', disable=not verbose):
             batch_time_step = torch.tensor(b * [time_step], device=x_lr.device)
 
-            # print(x.std(axis=(1,2,3,4)), x_lr.std(axis=(1,2,3,4)), delta.std(axis=(1,2,3,4)), vbv.std(axis=(1,2,3,4)))
-
             input = torch.cat([x, x_lr, delta, vbv], dim=1)
-            if False:#hasattr(self, 'net_g_ema'):
+            if hasattr(self, 'net_g_ema'):
                 self.net_g_ema.eval()
                 with torch.no_grad():
-                    eps_theta = self.net_g_ema(x=input, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
+                    v_theta = self.net_g_ema(x=input, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
             else:
                 self.net_g.eval()
                 with torch.no_grad():
-                    eps_theta = self.net_g(x=input, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
+                    v_theta = self.net_g(x=input, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)
                 self.net_g.train()
 
             std = self.sigma_t(batch_time_step)
+            alpha = torch.exp(self.C_t(batch_time_step))
+            eps_theta = alpha * v_theta + std * x
             score = -eps_theta / std
 
             # Reverse-time SDE: dx = [f(x,t) - g(t)²*score(x,t)] * (-dt) + g(t) dw
@@ -437,7 +438,6 @@ class ScoreDiffusionVPSDEModel(SRModel):
             eps = torch.randn_like(delta, device=delta.device)
 
             # Euler-Maruyama: going backwards means subtracting the forward drift
-            # x = x - (f_drift - g_diffusion**2 * score) * dt + g_diffusion * torch.sqrt(dt) * eps
             x = x - f_drift * dt + g_diffusion**2 * score * dt + g_diffusion * torch.sqrt(dt) * eps
 
             x_sequence = torch.cat([x_sequence, x.detach().cpu()], dim=1)

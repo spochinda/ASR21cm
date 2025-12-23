@@ -36,7 +36,7 @@ class FixedScale21cmDataset(data.Dataset):
         self.redshifts = opt['redshifts']
         self.IC_seeds = opt['IC_seeds']
         self.Npix = opt['Npix']
-        self.scale = opt.get('scale', 1)
+        self.scale = opt['scale']
         self.df = self.getDataFrame()
         if opt.get('load_full_dataset', False):
             print('Loading full dataset into memory...')
@@ -71,14 +71,17 @@ class FixedScale21cmDataset(data.Dataset):
         cubes = torch.cat([T21, delta, vbv], dim=0)
         cubes = random_spatial_crop(cubes, crop_size=self.gt_size)
         T21, delta, vbv = cubes.chunk(3, dim=0)
-
-        # generate LR data
+        # generate LR data and save stats to normalize HR
         T21_lr = torch.nn.functional.interpolate(T21, size=self.gt_size // self.scale, mode='trilinear')
-
-        # normalize data
         T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
         T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-        T21_lr = (T21_lr - T21_lr_mean) / T21_lr_std
+        # interpolate LR data back to GT size and normalize
+        T21_lr = torch.nn.functional.interpolate(T21_lr, size=self.gt_size, mode='trilinear')
+        T21_lr_upsampled_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+        T21_lr_upsampled_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
+        T21_lr = (T21_lr - T21_lr_upsampled_mean) / T21_lr_upsampled_std
+
+        # normalize data HR to LR stats and normalize delta and vbv
         T21 = (T21 - T21_lr_mean) / T21_lr_std
         delta_mean = torch.mean(delta, dim=(1, 2, 3, 4), keepdim=True)
         delta_std = torch.std(delta, dim=(1, 2, 3, 4), keepdim=True)
@@ -87,9 +90,6 @@ class FixedScale21cmDataset(data.Dataset):
         vbv_std = torch.std(vbv, dim=(1, 2, 3, 4), keepdim=True)
         vbv = (vbv - vbv_mean) / vbv_std
         labels = (labels - min(self.redshifts)) / (max(self.redshifts) - min(self.redshifts)) if len(self.redshifts) > 1 else torch.tensor(0.0)
-
-        # interpolate LR data back to GT size
-        T21_lr = torch.nn.functional.interpolate(T21_lr, size=self.gt_size, mode='trilinear')
 
         # remove redundant dimension
         T21 = T21.squeeze(0)
