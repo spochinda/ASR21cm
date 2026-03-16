@@ -1,307 +1,131 @@
-# :rocket: BasicSR Examples
+# ASR21cm — Arbitrary Super-Resolution for 21cm Cosmology
 
-[![download](https://img.shields.io/github/downloads/xinntao/BasicSR-examples/total.svg)](https://github.com/xinntao/BasicSR-examples/releases)
-[![Open issue](https://img.shields.io/github/issues/xinntao/BasicSR-examples)](https://github.com/xinntao/BasicSR-examples/issues)
-[![Closed issue](https://img.shields.io/github/issues-closed/xinntao/BasicSR-examples)](https://github.com/xinntao/BasicSR-examples/issues)
-[![LICENSE](https://img.shields.io/github/license/xinntao/basicsr-examples.svg)](https://github.com/xinntao/BasicSR-examples/blob/master/LICENSE)
-[![python lint](https://github.com/xinntao/BasicSR/actions/workflows/pylint.yml/badge.svg)](https://github.com/xinntao/BasicSR/blob/master/.github/workflows/pylint.yml)
-
-[English](README.md) **|** [简体中文](README_CN.md) <br>
-[`BasicSR repo`](https://github.com/xinntao/BasicSR) **|** [`simple mode example`](https://github.com/xinntao/BasicSR-examples/tree/master) **|** [`installation mode example`](https://github.com/xinntao/BasicSR-examples/tree/installation)
-
-In this repository, we give examples to illustrate **how to easily use** [`BasicSR`](https://github.com/xinntao/BasicSR) in **your own project**.
-
-:triangular_flag_on_post: **Projects that use BasicSR**
-- :white_check_mark: [**GFPGAN**](https://github.com/TencentARC/GFPGAN): A practical algorithm for real-world face restoration
-- :white_check_mark: [**Real-ESRGAN**](https://github.com/xinntao/Real-ESRGAN): A practical algorithm for general image restoration
-
-If you use `BasicSR` in your open-source projects, welcome to contact me (by [email](#e-mail-contact) or opening an issue/pull request). I will add your projects to the above list :blush:
+A deep learning framework for super-resolving 3D 21cm brightness temperature fields, built on top of [BasicSR](https://github.com/xinntao/BasicSR).
 
 ---
 
-If this repo is helpful, please help to :star: this repo or recommend it to your friends. Thanks:blush: <br>
-Other recommended projects:<br>
-:arrow_forward: [facexlib](https://github.com/xinntao/facexlib): A collection that provides useful face-relation functions.<br>
-:arrow_forward: [HandyView](https://github.com/xinntao/HandyView): A PyQt5-based image viewer that is handy for view and comparison.
+## Overview
+
+This repository implements several approaches for super-resolving simulated 21cm cosmological fields:
+
+| Model | Type | Description |
+|---|---|---|
+| `ArSSR` | Coordinate-based SR | Encoder (RDN/UNet) + implicit MLP decoder for arbitrary-scale SR |
+| `ASR21cmModel` | Supervised SR | Standard super-resolution with L1/perceptual losses |
+| `EsrASRGANModel` | GAN | ESRGAN-style adversarial training |
+| `ScoreDiffusionVPSDEModel` | Diffusion | Score-based diffusion with VP-SDE |
+| `ScoreDiffusionVPSDEvpredModel` | Diffusion | VP-SDE with v-prediction parameterisation |
 
 ---
 
-## Contents
+## Repository Structure
 
-- [HowTO use BasicSR](#HowTO-use-BasicSR)
-- [As s Template](#As-a-Template)
+```
+ASR21cm/
+├── archs/             # Network architectures (ArSSR, SongUNet, RDN, UNet)
+├── data/              # Datasets (Custom21cmDataset, FixedScale21cmDataset)
+├── losses/            # Custom losses (VPSDE, DSQ)
+├── metrics/           # Evaluation metrics
+├── models/            # Training logic for each model type
+├── train.py           # Entry point (standard BasicSR pipeline)
+└── train_asr.py       # Custom training pipeline for ArSSR
 
-## HowTO use BasicSR
+analysis/              # Post-training analysis scripts
+options/               # YAML configuration files
+datasets/              # Data directory (not tracked by git)
+experiments/           # Training outputs and checkpoints
+```
 
-`BasicSR` can be used in two ways:
-- :arrow_right: Git clone the entire BasicSR. In this way, you can see the complete codes of BasicSR, and then modify them according to your own needs.
-- :arrow_right: Use basicsr as a [python package](https://pypi.org/project/basicsr/#history) (that is, install with pip). It provides the training framework, procedures, and some basic functions. You can easily build your own projects based on basicsr.
-    ```bash
-    pip install basicsr
-    ```
+---
 
-Our example mainly focuses on the second one, that is, how to easily and concisely build your own project based on the basicsr package.
-
-There are two ways to use the python package of basicsr, which are provided in two branches:
-
-- :arrow_right: [simple mode](https://github.com/xinntao/BasicSR-examples/tree/master): the project can be run **without installation**. But it has limitations: it is inconvenient to import complex hierarchical relationships; It is not easy to access the functions in this project from other locations
-
-- :arrow_right: [installation mode](https://github.com/xinntao/BasicSR-examples/tree/installation): you need to install the project by running `python setup.py develop`. After installation, it is more convenient to import and use.
-
-This `installation` branch uses the *installation mode* for illustration. We recommend using this mode for practical use.
+## Installation
 
 ```bash
-git clone -b installation https://github.com/xinntao/BasicSR-examples.git
-cd BasicSR-examples
-python setup.py develop  # need to install
+git clone <repo-url>
+cd ASR21cm
+pip install -r requirements.txt
+python setup.py develop
 ```
 
-**Note that**: the installation model requires a package name for installation. We use `basicsrexamples` as the package name.
+**Requirements:** Python 3.8+, PyTorch, basicsr, numpy, opencv-python.
 
-### Preliminary
+---
 
-Most deep-learning projects can be divided into the following parts:
+## Data
 
-1. **data**: defines the training/validation data that is fed into the model training
-2. **arch** (architecture): defines the network structure and the forward steps
-3. **model**: defines the necessary components in training (such as loss) and a complete training process (including forward propagation, back-propagation, gradient optimization, *etc*.), as well as other functions, such as validation, *etc*
-4. Training pipeline: defines the training process, that is, connect the data-loader, model, validation, saving checkpoints, *etc*
+The models expect 21cm brightness temperature cubes and initial condition (IC) cubes organised as:
 
-When we are developing a new method, we often improve the **data**, **arch**, and **model**. Most training processes and basic functions are actually shared. Then, we hope to focus on the development of main functions instead of building wheels repeatedly.
+```
+datasets/
+└── varying_IC/
+    ├── T21_cubes/     # 21cm brightness temperature fields (Npix=256)
+    └── IC_cubes/      # Initial condition density/velocity fields
+```
 
-Therefore, we have BasicSR, which separates many shared functions. With BasicSR, we just need to care about the development of **data**, **arch**, and **model**.
+Data is indexed by redshift and IC seed. See the dataset classes in [ASR21cm/data/](ASR21cm/data/) for the expected file format.
 
-In order to further facilitate the use of BasicSR, we provide the basicsr package. You can easily install it through `pip install basicsr`. After that, you can use the training process of BasicSR and the functions already developed in BasicSR~
+---
 
-### A Simple Example
+## Training
 
-Let's use a simple example to illustrate how to use BasicSR to build your own project.
-
-We provide two sample data for demonstration:
-1. [BSDS100](https://github.com/xinntao/BasicSR-examples/releases/download/0.0.0/BSDS100.zip) for training
-1. [Set5](https://github.com/xinntao/BasicSR-examples/releases/download/0.0.0/Set5.zip) for validation
-
-You can easily download them by running the following command in the BasicSR-examples root path:
+### Arbitrary Super-Resolution (ArSSR)
 
 ```bash
-python scripts/prepare_example_data.py
+python ASR21cm/train_asr.py -opt options/ASR21cm_options_UNet.yml
 ```
 
-The sample data are now in the `datasets/example` folder.
-
-#### :zero: Purpose
-
-Let's use a Super-Resolution task for the demo.
-It takes a low-resolution image as the input and outputs a high-resolution image.
-The low-resolution images contain: 1) CV2 bicubic X4 downsampling, and 2) JPEG compression (quality = 70).
-
-In order to better explain how to use the arch and model, we use 1) a network structure similar to SRCNN; 2) use L1 and L2 (MSE) loss simultaneously in training.
-
-So, in this task, what we should do are:
-
-1. Build our own data loader
-1. Determine the architecture
-1. Build our own model
-
-Let's explain it separately in the following parts.
-
-#### :one: data
-
-We need to implement a new dataset to fulfill our purpose. The dataset is used to feed the data into the model.
-
-An example of this dataset is in [basicsrexamples/data/example_dataset.py](basicsrexamples/data/example_dataset.py). It has the following steps.
-
-1. Read Ground-Truth (GT) images. BasicSR provides [FileClient](https://github.com/xinntao/BasicSR/blob/master/basicsr/utils/file_client.py) for easily reading files in a folder, LMDB file and meta_info txt. In this example, we use the folder mode. For more reading modes, please refer to [basicsr/data](https://github.com/xinntao/BasicSR/tree/master/basicsr/data)
-1. Synthesize low resolution images. We can directly implement the data procedures in the `__getitem__(self, index)` function, such as downsampling and adding JPEG compression. Many basic operations can be found in [[basicsr/data/degradations]](https://github.com/xinntao/BasicSR/blob/master/basicsr/data/degradations.py), [[basicsr/data/tranforms]](https://github.com/xinntao/BasicSR/blob/master/basicsr/data/transforms.py) ,and [[basicsr/data/data_util]](https://github.com/xinntao/BasicSR/blob/master/basicsr/data/data_util.py)
-1. Convert to torch tensor and return appropriate information
-
-**Note**:
-
-1. Please add `@DATASET_REGISTRY.register()` before `ExampleDataset`. This operation is mainly used to prevent the occurrence of a dataset with the same name, which will result in potential bugs
-1. The new dataset file should end with `_dataset.py`, such as `example_dataset.py`. In this way, the program can **automatically** import classes without manual import
-
-In the [option configuration file](options/example_option.yml), you can use the new dataset:
-
-```yaml
-datasets:
-  train:  # training dataset
-    name: ExampleBSDS100
-    type: ExampleDataset  # the class name
-
-    # ----- the followings are the arguments of ExampleDataset ----- #
-    dataroot_gt: datasets/example/BSDS100
-    io_backend:
-      type: disk
-
-    gt_size: 128
-    use_flip: true
-    use_rot: true
-
-    # ----- arguments of data loader ----- #
-    use_shuffle: true
-    num_worker_per_gpu: 3
-    batch_size_per_gpu: 16
-    dataset_enlarge_ratio: 10
-    prefetch_mode: ~
-
-  val:  # validation dataset
-    name: ExampleSet5
-    type: ExampleDataset
-    dataroot_gt: datasets/example/Set5
-    io_backend:
-      type: disk
-```
-
-#### :two: arch
-
-An example of architecture is in [basicsrexamples/archs/example_arch.py](basicsrexamples/archs/example_arch.py). It mainly builds the network structure.
-
-**Note**:
-
-1. Add `@ARCH_REGISTRY.register()` before `ExampleArch`, so as to register the newly implemented arch. This operation is mainly used to prevent the occurrence of arch with the same name, resulting in potential bugs
-1. The new arch file should end with `_arch.py`, such as `example_arch.py`. In this way, the program can **automatically** import classes without manual import
-
-In the [option configuration file](options/example_option.yml), you can use the new arch:
-
-```yaml
-# network structures
-network_g:
-  type: ExampleArch  # the class name
-
-  # ----- the followings are the arguments of ExampleArch ----- #
-  num_in_ch: 3
-  num_out_ch: 3
-  num_feat: 64
-  upscale: 4
-```
-
-#### :three: model
-
-An example of model is in [basicsrexamples/models/example_model.py](basicsrexamples/models/example_model.py). It mainly builds the training process of a model.
-
-In this file:
-1. We inherit `SRModel` from basicsr. Many models have similar operations, so you can inherit and modify from [basicsr/models](https://github.com/xinntao/BasicSR/tree/master/basicsr/models). In this way, you can easily implement your ideas, such as GAN model, video model, *etc*.
-1. Two losses are used: L1 and L2 (MSE) loss
-1. Many other contents, such as `setup_optimizers`, `validation`, `save`, *etc*, are inherited from `SRModel`
-
-**Note**:
-
-1. Add `@MODEL_REGISTRY.register()` before `ExampleModel`, so as to register the newly implemented model. This operation is mainly used to prevent the occurrence of model with the same name, resulting in potential bugs
-1. The new model file should end with `_model.py`, such as `example_model.py`. In this way, the program can **automatically** import classes without manual import
-
-In the [option configuration file](options/example_option.yml), you can use the new model:
-
-```yaml
-# training settings
-train:
-  optim_g:
-    type: Adam
-    lr: !!float 2e-4
-    weight_decay: 0
-    betas: [0.9, 0.99]
-
-  scheduler:
-    type: MultiStepLR
-    milestones: [50000]
-    gamma: 0.5
-
-  total_iter: 100000
-  warmup_iter: -1  # no warm up
-
-  # ----- the followings are the configurations for two losses ----- #
-  # losses
-  l1_opt:
-    type: L1Loss
-    loss_weight: 1.0
-    reduction: mean
-
-  l2_opt:
-    type: MSELoss
-    loss_weight: 1.0
-    reduction: mean
-```
-
-#### :four: training pipeline
-
-The whole training pipeline can reuse the [basicsr/train.py](https://github.com/xinntao/BasicSR/blob/master/basicsr/train.py) in BasicSR.
-
-Based on this, our [basicsrexamples/train.py](basicsrexamples/train.py) can be very concise:
-
-```python
-import os.path as osp
-
-import archs  # noqa: F401
-import data  # noqa: F401
-import models  # noqa: F401
-from basicsr.train import train_pipeline
-
-if __name__ == '__main__':
-    root_path = osp.abspath(osp.join(__file__, osp.pardir))
-    train_pipeline(root_path)
-
-```
-
-#### :five: debug mode
-
-So far, we have completed the development of our project. We can quickly check whether there is a bug through the `debug` mode:
+### Fixed-Scale Diffusion Model (VP-SDE)
 
 ```bash
-python basicsrexamples/train.py -opt options/example_option.yml --debug
+python ASR21cm/train.py -opt options/ScoreDiffusionvpred_options.yml
 ```
 
-With `--debug`, the program will enter the debug mode. In the debug mode, the program will output at each iteration, and perform validation every 8 iterations, so that you can easily know whether the program has a bug~
-
-#### :six: normal training
-
-After debugging, we can have the normal training.
+Resume an interrupted run:
 
 ```bash
-python basicsrexamples/train.py -opt options/example_option.yml
+python ASR21cm/train.py -opt options/ScoreDiffusionvpred_options.yml --auto_resume
 ```
 
-If the training process is interrupted unexpectedly and the resume is required. Please use `--auto_resume` in the command:
+### On a SLURM Cluster (Cambridge HPC)
 
+Single GPU:
 ```bash
-python train.py -opt options/example_option.yml --auto_resume
+sbatch slurm_single_gpu
 ```
 
-So far, you have finished developing your own projects using `BasicSR`. Isn't it very convenient~ :grin:
+Multi-GPU (4x Ampere):
+```bash
+sbatch slurm_gpu
+```
 
-## As a Template
+---
 
-You can use BasicSR-Examples as a template for your project. Here are some modifications you may need.
+## Configuration
 
-As GitHub does not support a specific branch as a template, we need extra steps to use the `installation` branch as the template.
+All options are controlled by YAML files in [options/](options/). Key settings:
 
-1. Click `Use this template` and remember to check the `[ ] Include all branches` checkbox
-2. Change the installation branch to the master branch
-    ```bash
-    git clone -b installation YOUR_REPO  # clone the installation branch
-    cd REPO_NAME
-    git branch -m installation master  # rename the installation branch to master
-    git push -f origin master  # force push the local master branch to remote
-    git push origin --delete installation  # delete the remote installation branch
-    ```
+| Option | Description |
+|---|---|
+| `model_type` | Which model class to use |
+| `network_g.type` | Network architecture |
+| `datasets.train.scale` | Upscaling factor |
+| `datasets.train.redshifts` | List of redshifts to train on |
+| `datasets.train.IC_seeds` | List of IC seeds for training |
+| `beta_min` / `beta_max` | VP-SDE noise schedule bounds |
+| `train.total_iter` | Total training iterations |
 
-You may need to modify the following files:
+---
 
-1. Set up the *pre-commit* hook
-    1. In the root path, run:
-    > pre-commit install
-1. Modify the `LICENSE`<br>
-    This repository uses the *MIT* license, you may change it to other licenses
+## Analysis
 
-As the installation mode requires the package name, you also need to modify all the `basicsrexamples` names to YOUR_PACKAGE_NAME.
-Here are the detailed locations that contain the `basicsrexamples` name:
-1. The `basicsrexamples` folder
-1. [setup.py](setup.py#L9); &emsp; [setup.py](setup.py#L48); &emsp;[setup.py](setup.py#L91)
-1. [basicsrexamples/train.py](basicsrexamples/train.py#L4-L6)
-1. [basicsrexamples/archs/\_\_init\_\_.py](basicsrexamples/archs/__init__.py#L11)
-1. [basicsrexamples/data/\_\_init\_\_.py](basicsrexamples/data/__init__.py#L11)
-1. [basicsrexamples/models/\_\_init\_\_.py](basicsrexamples/models/__init__.py#L11)
+Post-training analysis scripts are in [analysis/](analysis/):
 
-You also need to modify the corresponding information in the [setup.py](setup.py#L88-L113).
+- `arbitrary_scaling.py` — evaluate ArSSR across a range of scales
+- `redshift_scaling.py` — evaluate performance across redshifts
+- `table_scaling.py` — generate summary tables of metrics
 
-## :e-mail: Contact
+---
 
-If you have any questions or want to add your project to the list, please email `xintao.wang@outlook.com` or `xintaowang@tencent.com`.
+## Acknowledgements
+
+Built on [BasicSR](https://github.com/xinntao/BasicSR). The `SongUNet` architecture is adapted from [NVlabs/edm](https://github.com/NVlabs/edm).
