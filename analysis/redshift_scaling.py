@@ -154,13 +154,12 @@ if __name__ == '__main__':
                 kmin_torch = torch.min(k_torch[kmin_mask_torch])
                 kmax_torch = torch.max(k_torch)
                 k_bin_edges_torch = torch.logspace(start=torch.log10(kmin_torch), end=torch.log10(kmax_torch), steps=100+1)
-                kmin_center = 2*np.pi/(1536) # (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2
-                kmax_center = np.pi/(12) # (k_bin_edges_torch[-1] + k_bin_edges_torch[-2]) / 2
+                kmin_center = 2*np.pi / 1536  # (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2
+                kmax_center = np.pi / 12  # (k_bin_edges_torch[-1] + k_bin_edges_torch[-2]) / 2
                 # print(kmin_center, kmax_center, (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2, (k_bin_edges_torch[-1] + k_bin_edges_torch[-2]) / 2, flush=True)
                 # axes[row + 2, col].axvspan(kmin_center, kmax_center, color="lightgrey", alpha=0.4)
                 # axes[row + 2, col].axvline(kmin_center, color="k", alpha=0.2, ls='--')
                 klim_LR = axes[row + 2, col].axvline(kmax_center, color="k", alpha=0.5, ls='--')
-
 
             axes[row + 2, col].loglog(k_hr, dsq_hr[idx, 0], label='$T_{{21}}$ HR', ls='solid', lw=2, rasterized=rasterized, zorder=2)
             axes[row + 2, col].loglog(k_sr, dsq_sr[0, 0], label='$T_{{21}}$ SR', ls='solid', lw=2, rasterized=rasterized, zorder=3)
