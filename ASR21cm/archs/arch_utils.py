@@ -1490,11 +1490,11 @@ if __name__ == '__main__':
     b, c, h, w, d = test_input.shape
 
     encoder = RDN(latent_dim=32,
-                   num_features=16,
-                   growth_rate=16,
-                   num_blocks=8,
-                   num_layers=3,
-                   redshift_embedding=True)
+                  num_features=16,
+                  growth_rate=16,
+                  num_blocks=8,
+                  num_layers=3,
+                  redshift_embedding=True)
     # encoder = MambaIR(  # img_size=32., patch_size=1,
     #    in_chans=1,
     #    embed_dim=16,
