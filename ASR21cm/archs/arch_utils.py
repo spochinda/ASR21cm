@@ -1370,6 +1370,7 @@ class FeatureAffine(nn.Module):
     def forward(self, x):
         return x * self.weight + self.bias
 
+
 class DenseLayer(nn.Module):
 
     def __init__(self, in_channels, out_channels):
@@ -1396,7 +1397,7 @@ class RDB(nn.Module):
         self.emb_channels = emb_channels
 
         if self.emb_channels:
-            self.affine = Linear(in_features=emb_channels, out_features=in_channels * 2) #, **init)
+            self.affine = Linear(in_features=emb_channels, out_features=in_channels * 2)  # , **init)
             self.norm1 = GroupNorm(num_channels=in_channels, eps=1e-5)
 
         self.layers = nn.Sequential(*[DenseLayer(in_channels + growth_rate * i, growth_rate) for i in range(num_layers)])
@@ -1432,9 +1433,9 @@ class RDN(nn.Module):
         self.C = num_layers
 
         if self.redshift_embedding:
-            self.z_emb = PositionalEmbedding(num_channels=num_features*4, endpoint=True)
-            self.map_layer0 = Linear(in_features=4*num_features, out_features=4*num_features) # , **init)
-            self.map_layer1 = Linear(in_features=4*num_features, out_features=num_features) # , **init)
+            self.z_emb = PositionalEmbedding(num_channels=num_features * 4, endpoint=True)
+            self.map_layer0 = Linear(in_features=4 * num_features, out_features=4 * num_features)  # , **init)
+            self.map_layer1 = Linear(in_features=4 * num_features, out_features=num_features)  # , **init)
 
         # shallow feature extraction
         self.sfe1 = nn.Conv3d(1, num_features, kernel_size=3, padding=3 // 2)
@@ -1446,7 +1447,6 @@ class RDN(nn.Module):
         # global feature fusion
         self.gff = nn.Sequential(nn.Conv3d(self.G * self.D, self.G0, kernel_size=1), nn.Conv3d(self.G0, self.G0, kernel_size=3, padding=3 // 2))
         self.output = nn.Conv3d(self.G0, latent_dim, kernel_size=3, padding=3 // 2)
-
 
     def forward(self, x, z=None):
         if self.redshift_embedding:
@@ -1489,13 +1489,13 @@ if __name__ == '__main__':
     test_input = torch.randn(2, 1, d, d, d)  # .cuda()
     b, c, h, w, d = test_input.shape
 
-    encoder  = RDN(latent_dim=32,
+    encoder = RDN(latent_dim=32,
                    num_features=16,
                    growth_rate=16,
                    num_blocks=8,
                    num_layers=3,
                    redshift_embedding=True)
-    #encoder = MambaIR(  # img_size=32., patch_size=1,
+    # encoder = MambaIR(  # img_size=32., patch_size=1,
     #    in_chans=1,
     #    embed_dim=16,
     #    depths=(6, 6, 6, 6),
@@ -1507,7 +1507,7 @@ if __name__ == '__main__':
     #    patch_norm=True,
     #    use_checkpoint=False,
     #    upscale=None,
-    #)  # img_range=1.,)
+    # )  # img_range=1.,)
     # encoder = MambaIREncoder(
     #    inp_channels=1,
     #    out_channels=1,
@@ -1520,7 +1520,6 @@ if __name__ == '__main__':
     labels = torch.tensor([[16], [16]])  # Example redshift value
     z, others = labels[:, 0], labels[:, 1:]  # z is the redshift value, others are additional parameters
     print(f'z shape: {z.shape}, z: {z}, \nothers: {others.shape}, others: {others}')
-    #out = encoder(test_input, z=z)
-    #print('encoder out shape test: ', out.shape)
-    #print(encoder)
-
+    # out = encoder(test_input, z=z)
+    # print('encoder out shape test: ', out.shape)
+    # print(encoder)

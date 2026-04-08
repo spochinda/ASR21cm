@@ -201,14 +201,14 @@ class ScoreDiffusionVPSDEModel(SRModel):
         # Extract data
         T21_normalized = metric_data['hr'].squeeze(0).squeeze(0)  # Remove batch and channel dims (B, C, H, W, D) -> (H, W, D)
 
-        time_steps = torch.linspace(1.-self.epsilon_t, self.epsilon_t, num_steps, device=T21_normalized.device)
+        time_steps = torch.linspace(1. - self.epsilon_t, self.epsilon_t, num_steps, device=T21_normalized.device)
 
-        t_values=[self.epsilon_t, 0.1, 0.2, 0.6, 1.-self.epsilon_t]
+        t_values = [self.epsilon_t, 0.1, 0.2, 0.6, 1. - self.epsilon_t]
         n_times = len(t_values)
         t_values = sorted(t_values)
         idx_list = []
 
-        for i,target_t in enumerate(t_values):
+        for i, target_t in enumerate(t_values):
             # Find the closest time step
             diffs = torch.abs(time_steps - target_t)
             closest_idx = torch.argmin(diffs).item()
@@ -261,7 +261,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
             exp_Ct = torch.exp(self.C_t(t_tensor)).squeeze().item()
 
             axes[0, i].set_title(f't = {t:.3f} (Forward)\nexp(C_t)={exp_Ct:.3f}, σ_t={sig_t:.3f}',
-                                fontsize=11, fontweight='bold')
+                                 fontsize=11, fontweight='bold')
             axes[0, i].set_xlabel('x')
             axes[0, i].set_ylabel('y')
             plt.colorbar(im, ax=axes[0, i])
@@ -366,7 +366,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
             torch.cuda.empty_cache()
 
             if save_img:
-                #self._save_validation_plot(metric_data, dataset_name, current_iter, idx + 1)
+                # self._save_validation_plot(metric_data, dataset_name, current_iter, idx + 1)
                 self._save_forward_reverse_validation_plot(metric_data, dataset_name, current_iter, idx + 1)
 
             if with_metrics:
@@ -403,7 +403,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
 
         b, *d = delta.shape  # select the last conditional to get the shape (order is delta,vbv)
 
-        time_steps = torch.linspace(1.-self.epsilon_t, self.epsilon_t, num_steps, device=x_lr.device)
+        time_steps = torch.linspace(1. - self.epsilon_t, self.epsilon_t, num_steps, device=x_lr.device)
         dt = torch.abs(time_steps[1] - time_steps[0])  # Positive step size
 
         x = torch.randn_like(delta, device=delta.device)
@@ -416,7 +416,7 @@ class ScoreDiffusionVPSDEModel(SRModel):
             # print(x.std(axis=(1,2,3,4)), x_lr.std(axis=(1,2,3,4)), delta.std(axis=(1,2,3,4)), vbv.std(axis=(1,2,3,4)))
 
             input = torch.cat([x, x_lr, delta, vbv], dim=1)
-            if False:#hasattr(self, 'net_g_ema'):
+            if False:  # hasattr(self, 'net_g_ema'):
                 self.net_g_ema.eval()
                 with torch.no_grad():
                     eps_theta = self.net_g_ema(x=input, noise_labels=batch_time_step, class_labels=class_labels, augment_labels=None)

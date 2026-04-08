@@ -68,8 +68,8 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
         sigma = torch.exp(torch.randn((b,), device=self.gt.device) * P_std + P_mean)
         t = self.sigma_to_t_vp(sigma)  # Returns [b] shaped tensor
 
-        #t = torch.rand((b // 2 + b % 2, ), device=self.gt.device) * (1. - self.epsilon_t) + self.epsilon_t
-        #t = torch.cat([t, 1 - t + self.epsilon_t], dim=0)[:b]
+        # t = torch.rand((b // 2 + b % 2, ), device=self.gt.device) * (1. - self.epsilon_t) + self.epsilon_t
+        # t = torch.cat([t, 1 - t + self.epsilon_t], dim=0)[:b]
 
         eps = torch.randn_like(self.gt, device=self.gt.device)
         C_t = self.C_t(t)  # Will reshape t to [b, 1, 1, 1, 1] internally
@@ -94,7 +94,7 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
         loss_dict = OrderedDict()
         # pixel loss
         if self.cri_pix:
-            #l_pix = self.cri_pix(v_target, v_theta)
+            # l_pix = self.cri_pix(v_target, v_theta)
             l_pix = torch.nn.functional.mse_loss(v_theta, v_target, reduction='none')
             l_pix = (l_pix * loss_weights).mean()
             l_total += l_pix
@@ -114,8 +114,8 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
             # Log gradient clipping statistics every 100 iterations
             if current_iter % 100 == 0:
                 self.logger.info(f'Gradients clipped: {self.grad_clipped_count}/{self.total_iters} '
-                               f'({100.0 * self.grad_clipped_count / self.total_iters:.1f}%), '
-                               f'current grad_norm: {grad_norm:.4f}, threshold: {self.grad_clip}')
+                                 f'({100.0 * self.grad_clipped_count / self.total_iters:.1f}%), '
+                                 f'current grad_norm: {grad_norm:.4f}, threshold: {self.grad_clip}')
 
         self.optimizer_g.step()
 
@@ -234,14 +234,14 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
 
         num_steps = x_sequence.shape[1]
 
-        time_steps = torch.linspace(1.-self.epsilon_t, self.epsilon_t, num_steps, device=T21_normalized.device)
+        time_steps = torch.linspace(1. - self.epsilon_t, self.epsilon_t, num_steps, device=T21_normalized.device)
 
-        t_values=[self.epsilon_t, 0.1, 0.2, 0.6, 1.-self.epsilon_t]
+        t_values = [self.epsilon_t, 0.1, 0.2, 0.6, 1. - self.epsilon_t]
         n_times = len(t_values)
         t_values = sorted(t_values)
         idx_list = []
 
-        for i,target_t in enumerate(t_values):
+        for i, target_t in enumerate(t_values):
             # Find the closest time step
             diffs = torch.abs(time_steps - target_t)
             closest_idx = torch.argmin(diffs).item()
@@ -294,7 +294,7 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
             exp_Ct = torch.exp(self.C_t(t_tensor)).squeeze().item()
 
             axes[0, i].set_title(f't = {t:.3f} (Forward)\nexp(C_t)={exp_Ct:.3f}, σ_t={sig_t:.3f}',
-                                fontsize=11, fontweight='bold')
+                                 fontsize=11, fontweight='bold')
             axes[0, i].set_xlabel('x')
             axes[0, i].set_ylabel('y')
             plt.colorbar(im, ax=axes[0, i])
@@ -336,18 +336,18 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
                     except Exception as e:
                         print(f"⚠ ERROR plotting histogram: {e}")
                         axes[2, i].text(0.5, 0.5, f'Histogram error: {str(e)[:50]}',
-                                       transform=axes[2, i].transAxes, ha='center',
-                                       bbox=dict(boxstyle='round', facecolor='orange', alpha=0.5), fontsize=8)
+                                        transform=axes[2, i].transAxes, ha='center',
+                                        bbox=dict(boxstyle='round', facecolor='orange', alpha=0.5), fontsize=8)
 
                     inf_count = torch.isinf(reverse_flat).sum().item()
                     nan_count = torch.isnan(reverse_flat).sum().item()
                     axes[2, i].text(0.5, 0.5, f'Warning: {inf_count} inf, {nan_count} nan values',
-                                   transform=axes[2, i].transAxes, ha='center',
-                                   bbox=dict(boxstyle='round', facecolor='red', alpha=0.3), fontsize=8)
+                                    transform=axes[2, i].transAxes, ha='center',
+                                    bbox=dict(boxstyle='round', facecolor='red', alpha=0.3), fontsize=8)
                 else:
                     axes[2, i].text(0.5, 0.5, 'All values are inf/nan!',
-                                   transform=axes[2, i].transAxes, ha='center',
-                                   bbox=dict(boxstyle='round', facecolor='red', alpha=0.5), fontsize=10)
+                                    transform=axes[2, i].transAxes, ha='center',
+                                    bbox=dict(boxstyle='round', facecolor='red', alpha=0.5), fontsize=10)
             else:
                 # Even if no inf/nan, check for and clip extreme values to prevent histogram overflow
                 min_val = reverse_flat.min().item()
@@ -361,8 +361,8 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
                 except Exception as e:
                     print(f"⚠ ERROR plotting histogram: {e}")
                     axes[2, i].text(0.5, 0.5, f'Histogram error: {str(e)[:50]}',
-                                   transform=axes[2, i].transAxes, ha='center',
-                                   bbox=dict(boxstyle='round', facecolor='orange', alpha=0.5), fontsize=8)
+                                    transform=axes[2, i].transAxes, ha='center',
+                                    bbox=dict(boxstyle='round', facecolor='orange', alpha=0.5), fontsize=8)
 
             fwd_mean = forward_state.mean().item()
             fwd_std = forward_state.std().item()
@@ -432,13 +432,13 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
             class_labels = self.labels if self.label_dim > 0 else None
 
             # Debug: Print label information
-            #print(f"\n=== Validation Sample {idx+1} ===")
-            #print(f"Labels shape: {self.labels.shape}")
-            #print(f"Labels value: {self.labels}")
-            #print(f"class_labels shape: {class_labels.shape if class_labels is not None else None}")
-            #print(f"class_labels value: {class_labels}")
-            #print(f"Batch size from lq: {self.lq.shape[0]}")
-            #print("="*40)
+            # print(f"\n=== Validation Sample {idx+1} ===")
+            # print(f"Labels shape: {self.labels.shape}")
+            # print(f"Labels value: {self.labels}")
+            # print(f"class_labels shape: {class_labels.shape if class_labels is not None else None}")
+            # print(f"class_labels value: {class_labels}")
+            # print(f"Batch size from lq: {self.lq.shape[0]}")
+            # print("="*40)
 
             x_sequence = self.test(x_lr=self.lq, delta=self.delta, vbv=self.vbv, class_labels=class_labels, num_steps=50, verbose=False)
 
@@ -461,7 +461,7 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
             torch.cuda.empty_cache()
 
             if save_img:
-                #self._save_validation_plot(metric_data, dataset_name, current_iter, idx + 1)
+                # self._save_validation_plot(metric_data, dataset_name, current_iter, idx + 1)
                 self._save_forward_reverse_validation_plot(metric_data, dataset_name, current_iter, idx + 1)
 
             if with_metrics:
@@ -498,7 +498,7 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
 
         b, *d = delta.shape  # select the last conditional to get the shape (order is delta,vbv)
 
-        time_steps = torch.linspace(1.-self.epsilon_t, self.epsilon_t, num_steps, device=x_lr.device)
+        time_steps = torch.linspace(1. - self.epsilon_t, self.epsilon_t, num_steps, device=x_lr.device)
         dt = torch.abs(time_steps[1] - time_steps[0])  # Positive step size
 
         x = torch.randn_like(delta, device=delta.device)
@@ -509,15 +509,15 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
             batch_time_step = torch.tensor(b * [time_step], device=x_lr.device)
 
             # Debug: Print info at first step
-            if False:#i == 0:
-                print(f"\n--- First sampling step debug ---")
+            if False:  # i == 0:
+                print("\n--- First sampling step debug ---")
                 print(f"Batch size (b): {b}")
                 print(f"batch_time_step shape: {batch_time_step.shape}")
                 print(f"class_labels shape: {class_labels.shape if class_labels is not None else None}")
                 print(f"class_labels value: {class_labels}")
                 print(f"x shape: {x.shape}")
                 print(f"delta shape: {delta.shape}")
-                print("-"*40)
+                print("-" * 40)
 
             input = torch.cat([x, x_lr, delta, vbv], dim=1)
             if hasattr(self, 'net_g_ema'):
@@ -645,11 +645,11 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
 
         for i in tqdm(range(num_steps - 1), desc='Heun Sampling', disable=not verbose):
             t_cur = t_steps[i].expand(b)
-            t_next = t_steps[i+1].expand(b)
-            dt = t_next[0] - t_cur[0] # Negative step
+            t_next = t_steps[i + 1].expand(b)
+            dt = t_next[0] - t_cur[0]  # Negative step
 
             # --- 1. Predictor: Estimate drift at current point ---
-            #t_cur_5d = t_cur.view(-1, 1, 1, 1, 1)
+            # t_cur_5d = t_cur.view(-1, 1, 1, 1, 1)
             inp_cur = torch.cat([x, x_lr, delta, vbv], dim=1)
 
             with torch.no_grad():
@@ -672,7 +672,7 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
             x_prime = x + drift_cur * dt
 
             # --- 2. Corrector: Estimate drift at the predicted next point ---
-            #t_next_5d = t_next.view(-1, 1, 1, 1, 1)
+            # t_next_5d = t_next.view(-1, 1, 1, 1, 1)
             inp_next = torch.cat([x_prime, x_lr, delta, vbv], dim=1)
 
             with torch.no_grad():
@@ -698,7 +698,7 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
             cond2 = x_max > 1e10
             cond3 = v_theta_max > 1e10
             cond4 = v_theta_min < -1e10
-            if  cond1 or cond2 or cond3 or cond4:
+            if cond1 or cond2 or cond3 or cond4:
                 logger.warning(f"⚠ EXTREME VALUES at t={t_cur.item():.4f}:")
                 logger.warning(f"  Conditions: x_min<-1e10: {cond1}, x_max>1e10: {cond2}, v_theta_max>1e10: {cond3}, v_theta_min<-1e10: {cond4}")
                 logger.warning(f"  v_theta: min={v_next.min().item():.2e}, max={v_next.max().item():.2e}, mean={v_next.mean().item():.2e}")
@@ -708,7 +708,7 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
                 logger.warning(f"  x: min={x.min().item():.2e}, max={x.max().item():.2e}")
                 if class_labels is not None:
                     logger.warning(f"  class_labels={class_labels.item():.4f}")
-                #breakpoint()
+                # breakpoint()
 
             if torch.isnan(x).any() or torch.isinf(x).any():
                 nan_count = torch.isnan(x).sum().item()
@@ -716,12 +716,10 @@ class ScoreDiffusionVPSDEvpredModel(SRModel):
                 logger.warning(f"⚠ WARNING: Numerical instability at t={t_cur.item():.4f} (NaN: {nan_count}, Inf: {inf_count})")
                 # Clamp to finite values to allow visualization to continue
                 x = torch.nan_to_num(x, nan=0.0, posinf=1e10, neginf=-1e10)
-                #breakpoint()
-
-
+                # breakpoint()
 
             # Optional: sequence tracking
-            #if i % 5 == 0 or i == num_steps - 2:
+            # if i % 5 == 0 or i == num_steps - 2:
             x_sequence = torch.cat([x_sequence, x.detach().cpu()], dim=1)
 
         self.output = x

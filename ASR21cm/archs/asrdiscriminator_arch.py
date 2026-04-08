@@ -92,13 +92,13 @@ class VGGStyleDiscriminator3D(nn.Module):
 
         self.redshift_embedding = redshift_embedding
         if self.redshift_embedding:
-            self.z_emb = PositionalEmbedding(num_channels=num_feat*4, endpoint=True)
-            self.map_layer0 = nn.Linear(in_features=4*num_feat, out_features=4*num_feat) # , **init)
-            self.map_layer1 = nn.Linear(in_features=4*num_feat, out_features=num_feat) # , **init)
+            self.z_emb = PositionalEmbedding(num_channels=num_feat * 4, endpoint=True)
+            self.map_layer0 = nn.Linear(in_features=4 * num_feat, out_features=4 * num_feat)  # , **init)
+            self.map_layer1 = nn.Linear(in_features=4 * num_feat, out_features=num_feat)  # , **init)
 
         # add film
         if self.redshift_embedding:
-            self.affine_0 = Linear(in_features=num_feat, out_features=num_in_ch * 2) #, **init), in_features=num_feat to match embedding size
+            self.affine_0 = Linear(in_features=num_feat, out_features=num_in_ch * 2)  # , **init), in_features=num_feat to match embedding size
             self.norm_0 = GroupNorm(num_channels=num_in_ch, eps=1e-5)
         self.conv0_0 = nn.Conv3d(num_in_ch, num_feat, 3, 1, 1, bias=True)
         self.conv0_1 = nn.Conv3d(num_feat, num_feat, 4, 2, 1, bias=False)
@@ -246,7 +246,7 @@ if __name__ == '__main__':
     }
     net = VGGStyleDiscriminator3D(**network_d)
     print(net)
-    b,  c, h, w = 1, 1, network_d['input_size'], network_d['input_size']
+    b, c, h, w = 1, 1, network_d['input_size'], network_d['input_size']
     x = torch.randn(b, c, h, w, h)  # (batch_size, channels, depth, height, width)
     z = torch.ones(b)
     delta = torch.randn(b, 1, h, w, h)  # Example delta tensor

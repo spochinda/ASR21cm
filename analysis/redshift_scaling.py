@@ -67,7 +67,7 @@ if __name__ == '__main__':
     T21_lr = []
     net_g.eval()
     for i in tqdm(range(len(T21_hr)), desc='Scaling...', total=len(T21_hr)):
-        input = torch.nn.functional.interpolate(T21_hr[i:i + 1], size=Npix//4, mode='trilinear')
+        input = torch.nn.functional.interpolate(T21_hr[i:i + 1], size=Npix // 4, mode='trilinear')
         input_mean = torch.mean(input, dim=(1, 2, 3, 4), keepdim=True)
         input_std = torch.std(input, dim=(1, 2, 3, 4), keepdim=True)
         input, _, _ = utils.normalize(input, mode='standard')
@@ -147,14 +147,14 @@ if __name__ == '__main__':
             axes[row, col].text(0.05, 0.95, rf'$z={z[idx]:.0f}$' + '\n' + rf'$\mathrm{{RMSE}}^{{T_{{21}}}}_\mathrm{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}^{{T_{{21}}}}_\mathrm{{LRI}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[row, col].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
 
             if True:
-                kspace_torch = torch.fft.fftfreq(int(512/4), d=3*4/(2*np.pi))
-                kx_torch, ky_torch, kz_torch = torch.meshgrid(kspace_torch,kspace_torch,kspace_torch, indexing='ij')# .view(batch,channel,*d)
+                kspace_torch = torch.fft.fftfreq(int(512 / 4), d=3 * 4 / (2 * np.pi))
+                kx_torch, ky_torch, kz_torch = torch.meshgrid(kspace_torch, kspace_torch, kspace_torch, indexing='ij')  # .view(batch,channel,*d)
                 k_torch = torch.sqrt(kx_torch**2 + ky_torch**2 + kz_torch**2)
                 kmin_mask_torch = k_torch > 0
                 kmin_torch = torch.min(k_torch[kmin_mask_torch])
                 kmax_torch = torch.max(k_torch)
-                k_bin_edges_torch = torch.logspace(start=torch.log10(kmin_torch), end=torch.log10(kmax_torch), steps=100+1)
-                kmin_center = 2*np.pi / 1536  # (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2
+                k_bin_edges_torch = torch.logspace(start=torch.log10(kmin_torch), end=torch.log10(kmax_torch), steps=100 + 1)
+                kmin_center = 2 * np.pi / 1536  # (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2
                 kmax_center = np.pi / 12  # (k_bin_edges_torch[-1] + k_bin_edges_torch[-2]) / 2
                 # print(kmin_center, kmax_center, (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2, (k_bin_edges_torch[-1] + k_bin_edges_torch[-2]) / 2, flush=True)
                 # axes[row + 2, col].axvspan(kmin_center, kmax_center, color="lightgrey", alpha=0.4)

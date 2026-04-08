@@ -75,7 +75,6 @@ class ArSSR(nn.Module):
 
         feature_vector = feature_vector.permute(0, 2, 1)
 
-
         # concatenate coordinate with feature vector
         feature_vector_and_xyz_hr = torch.cat([feature_vector, xyz_hr], dim=-1)  # N×K×(3+feature_dim)
         # print(f'feature_vector_and_xyz_hr shape: {feature_vector_and_xyz_hr.shape}', flush=True)
@@ -96,7 +95,7 @@ if __name__ == '__main__':
     h_lr = int(h // 2)
     T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
 
-    xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)
+    xyz_hr = make_coord([h, h, h], ranges=None, flatten=False)  # noqa: F405
     xyz_hr = xyz_hr.view(1, -1, 3)
     xyz_hr = xyz_hr.repeat(b, 1, 1)
 
@@ -106,11 +105,11 @@ if __name__ == '__main__':
     network_g = {'type': 'ArSSR', 'ArSSR_opt': ArSSR_opt, 'encoder_opt': encoder_opt, 'decoder_opt': decoder_opt}
     # build network
     net_g = ArSSR(ArSSR_opt=network_g['ArSSR_opt'],
-                                              encoder_opt=network_g['encoder_opt'],
-                                              decoder_opt=network_g['decoder_opt'],
-                                              multi_gpu=False,
-                                              device=torch.device('cpu'))
-    z = torch.tensor([[0,1]])
+                  encoder_opt=network_g['encoder_opt'],
+                  decoder_opt=network_g['decoder_opt'],
+                  multi_gpu=False,
+                  device=torch.device('cpu'))
+    z = torch.tensor([[0, 1]])
     delta = torch.rand(b, 1, h, h, h)
     vbv = torch.rand(b, 1, h, h, h)
     print(z, z.shape, delta.shape, vbv.shape, T21_lr.shape, xyz_hr.shape)

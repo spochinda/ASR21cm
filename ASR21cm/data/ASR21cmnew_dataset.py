@@ -48,7 +48,6 @@ class Custom21cmDatasetNew(data.Dataset):
         self.scale_min = opt.get('scale_min', 2)
         self.scale_max = opt.get('scale_max', 4)
 
-
     def __getitem__(self, idx):
         if hasattr(self, 'dataset'):
             T21 = self.dataset.tensors[0][idx]
@@ -111,7 +110,6 @@ class Custom21cmDatasetNew(data.Dataset):
         T21_lr_std = T21_lr_std.squeeze(0)
         scale_factor = scale_factor.squeeze(0)
 
-
         data = dict(lq=T21_lr, gt=T21, labels=labels, T21_lr_mean=T21_lr_mean, T21_lr_std=T21_lr_std, scale_factor=scale_factor, delta=delta, vbv=vbv)
         return data
 
@@ -134,7 +132,6 @@ class Custom21cmDatasetNew(data.Dataset):
                 row.append(vbv_files[0])
 
                 rows.append(row)
-
 
         df = pd.DataFrame(rows, columns=['IC', 'labels (z)', 'T21', 'delta', 'vbv'])
 
@@ -174,6 +171,7 @@ class Custom21cmDatasetNew(data.Dataset):
         self.dataset = torch.utils.data.TensorDataset(T21, delta, vbv, labels)
 
         return self.dataset
+
 
 def random_spatial_crop(tensor, crop_size):
     """

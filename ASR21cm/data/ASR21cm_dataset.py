@@ -149,11 +149,11 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         T21 = random_spatial_crop(T21, crop_size=gt_size)
         # cubes = random_spatial_crop(cubes, crop_size=64)
 
-    labels = torch.concatenate(labels, dim=0) # labels is tuple of tensors because each sample can have different astro parameters
-    #b, label_dim = labels.shape
-    #expansion_factor = 2**(3 * cut_factor)
-    #labels = labels.repeat(1, expansion_factor)
-    #labels = labels.view(b * expansion_factor, label_dim)
+    labels = torch.concatenate(labels, dim=0)  # labels is tuple of tensors because each sample can have different astro parameters
+    # b, label_dim = labels.shape
+    # expansion_factor = 2**(3 * cut_factor)
+    # labels = labels.repeat(1, expansion_factor)
+    # labels = labels.view(b * expansion_factor, label_dim)
 
     b, c, h, w, d = T21.shape
     size_min = h // scale_max
@@ -180,7 +180,7 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     elif phase == 'val':
         if h_lr is None:
-            h_lr = [h // i for i in range(2, 5)]#5)]
+            h_lr = [h // i for i in range(2, 5)]  # 5)]
         elif isinstance(h_lr, int):
             h_lr = [h // h_lr]
         elif isinstance(h_lr, list):

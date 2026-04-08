@@ -177,6 +177,7 @@ class ESRASRGANModel(SRGANModel):
 
         if self.ema_decay > 0:
             self.model_ema(decay=self.ema_decay)
+
     def nondist_validation(self, dataloader, current_iter, tb_logger, save_img):
         dataset_name = dataloader.dataset.opt['name']
         with_metrics = self.opt['val'].get('metrics') is not None
@@ -337,7 +338,7 @@ class ESRASRGANModel(SRGANModel):
                     # tqdm loop verbose argument
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
                         self.output = []
-                        for i,lq in tqdm(enumerate(self.lq), total=len(self.lq), disable=True): # not self.opt['val'].get('pbar', False), desc='testing scales'):
+                        for i, lq in tqdm(enumerate(self.lq), total=len(self.lq), disable=True):  # not self.opt['val'].get('pbar', False), desc='testing scales'):
                             kwargs = {'z': self.z[i]} if self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) else {}
                             if hasattr(self, 'delta'):
                                 kwargs['delta'] = self.delta[i]
@@ -363,7 +364,7 @@ class ESRASRGANModel(SRGANModel):
                 elif isinstance(self.lq, list):
                     with torch.amp.autocast(device_type=self.device.type, enabled=False):
                         self.output = []
-                        for i,lq in tqdm(enumerate(self.lq), total=len(self.lq), disable=True): # not self.opt['val'].get('pbar', False), desc='testing scales'):
+                        for i, lq in tqdm(enumerate(self.lq), total=len(self.lq), disable=True):  # not self.opt['val'].get('pbar', False), desc='testing scales'):
                             kwargs = {'z': self.z[i]} if self.opt['network_g']['encoder_opt'].get('redshift_embedding', False) else {}
                             if hasattr(self, 'delta'):
                                 kwargs['delta'] = self.delta[i]
@@ -381,9 +382,9 @@ class ESRASRGANModel(SRGANModel):
         self.T21_lr_std = data['T21_lr_std'].to(self.device) if isinstance(data['T21_lr_std'], torch.Tensor) else [std.to(self.device) for std in data['T21_lr_std']]
         self.scale_factor = data['scale_factor'].to(self.device) if isinstance(data['scale_factor'], torch.Tensor) else [scale.to(self.device) for scale in data['scale_factor']]
         self.labels = data['labels'].to(self.device) if isinstance(data['labels'], torch.Tensor) else [label.to(self.device) for label in data['labels']]
-        self.z = self.labels[:,0].to(self.device) if isinstance(self.labels, torch.Tensor) else [label[:, 0].to(self.device) for label in self.labels]
-        self.astro_params = self.labels[:,1:].to(self.device) if isinstance(self.labels, torch.Tensor) else [label[:, 1:].to(self.device) for label in self.labels]
-        if 'delta' in data.keys(): # if not data.get('delta', None) is None:
+        self.z = self.labels[:, 0].to(self.device) if isinstance(self.labels, torch.Tensor) else [label[:, 0].to(self.device) for label in self.labels]
+        self.astro_params = self.labels[:, 1:].to(self.device) if isinstance(self.labels, torch.Tensor) else [label[:, 1:].to(self.device) for label in self.labels]
+        if 'delta' in data.keys():  # if not data.get('delta', None) is None:
             self.delta = data['delta'].to(self.device) if isinstance(data['delta'], torch.Tensor) else [delta.to(self.device) for delta in data['delta']]
         else:
             self.delta = None
