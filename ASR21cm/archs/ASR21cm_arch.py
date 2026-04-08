@@ -52,6 +52,8 @@ class ArSSR(nn.Module):
         z = kwargs.get('z', None)
         delta = kwargs.get('delta', None)
         vbv = kwargs.get('vbv', None)
+        chunks = kwargs.get('chunks', False)
+
         assert not (self.conditional_cubes and (delta is None or vbv is None)), \
             'If conditional cubes are used, delta and vbv must be provided.'
 
@@ -79,7 +81,7 @@ class ArSSR(nn.Module):
         # print(f'feature_vector_and_xyz_hr shape: {feature_vector_and_xyz_hr.shape}', flush=True)
         # estimate the voxel intensity at the coordinate by using decoder.
         N, K = xyz_hr.shape[:2]
-        img_sr = self.decoder(feature_vector_and_xyz_hr.view(N * K, -1)).view(N, K, -1)  # N×K×1
+        img_sr = self.decoder(feature_vector_and_xyz_hr.view(N * K, -1), chunks=chunks).view(N, K, -1)  # N×K×1
         img_sr = img_sr.permute(0, 2, 1)  # N×1×K
         h = w = d = int(round(K**(1 / 3)))
         img_sr = img_sr.view(N, 1, h, w, d)
@@ -89,7 +91,7 @@ class ArSSR(nn.Module):
 if __name__ == '__main__':
 
     h = 93
-    b = 2
+    b = 1
     T21 = torch.rand(b, 1, h, h, h)
     h_lr = int(h // 2)
     T21_lr = torch.nn.functional.interpolate(T21, size=h_lr, mode='trilinear')
@@ -108,8 +110,9 @@ if __name__ == '__main__':
                                               decoder_opt=network_g['decoder_opt'],
                                               multi_gpu=False,
                                               device=torch.device('cpu'))
-    z = torch.ones(b)
+    z = torch.tensor([[0,1]])
     delta = torch.rand(b, 1, h, h, h)
     vbv = torch.rand(b, 1, h, h, h)
+    print(z, z.shape, delta.shape, vbv.shape, T21_lr.shape, xyz_hr.shape)
     img_sr, feature_map = net_g(img_lr=T21_lr, xyz_hr=xyz_hr, z=z, delta=delta, vbv=vbv)
     print(img_sr.shape)

@@ -73,7 +73,7 @@ if __name__ == '__main__':
         input, _, _ = utils.normalize(input, mode='standard')
 
         with torch.no_grad():
-            #output, _ = net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z[i:i+1], chunks=40)
+            # output, _ = net_g(img_lr=input, xyz_hr=xyz_hr, delta=delta, vbv=vbv, z=z[i:i+1], chunks=40)
             output = torch.rand_like(delta)  # Placeholder for the actual output
             T21_sr.append(output * input_std + input_mean)
             input = input * input_std + input_mean  # denormalize input
@@ -83,8 +83,8 @@ if __name__ == '__main__':
 
     T21_lr = torch.concat(T21_lr, dim=0)
     T21_sr = torch.concat(T21_sr, dim=0)
-    #torch.save(T21_sr, os.path.join(current_dir, 'files', 'T21_sr_z.pt'))
-    T21_sr = torch.load(os.path.join(current_dir, 'files', 'T21_sr_z.pt'))
+    # torch.save(T21_sr, os.path.join(current_dir, 'files', 'T21_sr_z.pt'))
+    T21_sr = torch.load(os.path.join(current_dir, 'files', 'T21_sr_z.pt'), map_location=device)
 
     print(f'T21_sr shape: {T21_sr.shape}', flush=True)
     print(f'T21_lr shape: {T21_lr.shape}', flush=True)
@@ -93,10 +93,10 @@ if __name__ == '__main__':
     # matplotlib settings
     rasterized = False
     plt.rcParams.update({
-        #'text.usetex': True,
-        #'font.family': 'serif',
-        #'font.serif': 'cm',
-        'font.size': 22,
+        'text.usetex': True,
+        'font.family': 'serif',
+        'font.serif': 'cm',
+        'font.size': 26,
     })
 
     nrows = 4
@@ -144,25 +144,41 @@ if __name__ == '__main__':
             axes[row, col].hist(T21_lr[idx].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='LR', histtype='step', linewidth=4, density=True, zorder=1, rasterized=rasterized)
             rmse_sr = torch.sqrt(torch.mean((T21_sr[idx] - T21_hr[idx])**2))
             rmse_lr = torch.sqrt(torch.mean((T21_lr[idx] - T21_hr[idx])**2))
-            axes[row, col].text(0.05, 0.95, rf'$z={z[idx]:.0f}$' + '\n' + rf'$\mathrm{{RMSE}}{{T_{21}}}_{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}^{{T_{{21}}}}_{{LRI}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[row, col].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+            axes[row, col].text(0.05, 0.95, rf'$z={z[idx]:.0f}$' + '\n' + rf'$\mathrm{{RMSE}}^{{T_{{21}}}}_\mathrm{{SR}} = {rmse_sr.item():.2f}\ \mathrm{{mK}}$' + '\n' + rf'$\mathrm{{RMSE}}^{{T_{{21}}}}_\mathrm{{LRI}} = {rmse_lr.item():.2f}\ \mathrm{{mK}}$', transform=axes[row, col].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+
+            if True:
+                kspace_torch = torch.fft.fftfreq(int(512/4), d=3*4/(2*np.pi))
+                kx_torch, ky_torch, kz_torch = torch.meshgrid(kspace_torch,kspace_torch,kspace_torch, indexing='ij')# .view(batch,channel,*d)
+                k_torch = torch.sqrt(kx_torch**2 + ky_torch**2 + kz_torch**2)
+                kmin_mask_torch = k_torch > 0
+                kmin_torch = torch.min(k_torch[kmin_mask_torch])
+                kmax_torch = torch.max(k_torch)
+                k_bin_edges_torch = torch.logspace(start=torch.log10(kmin_torch), end=torch.log10(kmax_torch), steps=100+1)
+                kmin_center = 2*np.pi/(1536) # (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2
+                kmax_center = np.pi/(12) # (k_bin_edges_torch[-1] + k_bin_edges_torch[-2]) / 2
+                # print(kmin_center, kmax_center, (k_bin_edges_torch[1] + k_bin_edges_torch[0]) / 2, (k_bin_edges_torch[-1] + k_bin_edges_torch[-2]) / 2, flush=True)
+                # axes[row + 2, col].axvspan(kmin_center, kmax_center, color="lightgrey", alpha=0.4)
+                # axes[row + 2, col].axvline(kmin_center, color="k", alpha=0.2, ls='--')
+                klim_LR = axes[row + 2, col].axvline(kmax_center, color="k", alpha=0.5, ls='--')
+
 
             axes[row + 2, col].loglog(k_hr, dsq_hr[idx, 0], label='$T_{{21}}$ HR', ls='solid', lw=2, rasterized=rasterized, zorder=2)
             axes[row + 2, col].loglog(k_sr, dsq_sr[0, 0], label='$T_{{21}}$ SR', ls='solid', lw=2, rasterized=rasterized, zorder=3)
             axes[row + 2, col].loglog(k_lr, dsq_lr[0, 0], label='$T_{{21}}$ LR (Interpolated)', ls='solid', lw=2, rasterized=rasterized, zorder=1)
             rmse_dsq_sr = torch.sqrt(torch.nanmean((dsq_sr - dsq_hr)**2))
             rmse_dsq_lr = torch.sqrt(torch.nanmean((dsq_lr - dsq_hr)**2))
-            axes[row + 2, col].text(0.05, 0.95, rf'$s=4$, $z={z[idx].item():.0f}$' + '\n' + rf'$\mathrm{{RMSE}}^{{\Delta^2}}_{{SR}} = {rmse_dsq_sr.item():.2f}\ \mathrm{{mK}}^2$' + '\n' + rf'$\mathrm{{RMSE}}^{{\Delta^2}}_{{LRI}} = {rmse_dsq_lr.item():.2f}\ \mathrm{{mK}}^2$', transform=axes[row + 2, col].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
+            axes[row + 2, col].text(0.05, 0.95, rf'$s=4$, $z={z[idx].item():.0f}$' + '\n' + rf'$\mathrm{{RMSE}}^{{\Delta^2}}_\mathrm{{SR}} = {rmse_dsq_sr.item():.2f}\ \mathrm{{mK}}^2$' + '\n' + rf'$\mathrm{{RMSE}}^{{\Delta^2}}_\mathrm{{LRI}} = {rmse_dsq_lr.item():.2f}\ \mathrm{{mK}}^2$', transform=axes[row + 2, col].transAxes, fontsize=plt.rcParams['font.size'] - 2, ha='left', va='top')
 
             if row == 0:
                 axes[row + 1, col].set_xlabel('$T_{21}$ [$\\mathrm{mK}$]')
                 if col == 0:
-                    axes[row, col].set_ylabel('PDF')
-                    axes[row + 1, col].set_ylabel('PDF')
+                    axes[row, col].set_ylabel('PDF of voxel $T_{21}$')
+                    axes[row + 1, col].set_ylabel('PDF of voxel $T_{21}$')
             if row == 1:
                 axes[row + 2, col].set_xlabel('$k\\ [\\mathrm{{cMpc^{-1}}}]$')
                 if col == 0:
-                    axes[row + 1, col].set_ylabel(r'$P(k)$ [${\rm mK^2}$]')
-                    axes[row + 2, col].set_ylabel(r'$P(k)$ [${\rm mK^2}$]')
+                    axes[row + 1, col].set_ylabel(r'$\Delta^2_{21} (k)$ [${\rm mK^2}$]')
+                    axes[row + 2, col].set_ylabel(r'$\Delta^2_{21} (k)$ [${\rm mK^2}$]')
 
             progress_bar.update(1)
 
@@ -176,12 +192,14 @@ if __name__ == '__main__':
     line_lr = mlines.Line2D([], [], color=colors[2], linewidth=4, label='LRI')
 
     axes[0, 0].legend(handles=[line_hr, line_sr, line_lr], fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='center left')
+    import matplotlib.lines as mlines
+    axes[2, 0].legend(handles=[klim_LR], labels=[r'$k^\mathrm{LR}_{\mathrm{max}}$'], fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='upper left', bbox_to_anchor=(0, 0.71))
     # axes[0, 0].legend(fontsize=plt.rcParams['font.size'] - 2, frameon=False, loc='center left')
 
     axes[1, 0].set_xlim(-220, 10)
     axes[1, 0].set_ylim(0, 0.095)
-    axes[3, 0].set_ylim(2e-1, 1e3)
+    axes[3, 0].set_ylim(2e-1, 2e3)
 
-    save_img_path = os.path.join(current_dir, 'plots',f'redshift_scaling_Npix{Npix}.pdf')
+    save_img_path = os.path.join(current_dir, 'plots', f'redshift_scaling_Npix{Npix}.pdf')
     plt.savefig(save_img_path, bbox_inches='tight')
     plt.close(fig)

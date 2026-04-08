@@ -1317,19 +1317,17 @@ class MLP_decoder(nn.Module):
         self.stage_one = nn.Sequential(*stage_one)
         self.stage_two = nn.Sequential(*stage_two)
 
-    def forward(self, x):
-        x = self.norm(x)
-        h = self.stage_one(x)
-        output = self.stage_two(x + h)
-        if False:
-            if self.chunk:
-                x_chunks = x.chunk(8, dim=0)
-                h_chunks = [torch.utils.checkpoint.checkpoint(self.stage_one, x_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_one(x_chunk) for x_chunk in x_chunks]
-                output_chunks = [torch.utils.checkpoint.checkpoint(self.stage_two, x_chunk + h_chunk, use_reentrant=False) if self.use_checkpoint else self.stage_two(x_chunk + h_chunk) for x_chunk, h_chunk in zip(x_chunks, h_chunks)]
-                output = torch.cat(output_chunks, dim=0)
-            else:
-                h = torch.utils.checkpoint.checkpoint(self.stage_one, x, use_reentrant=False) if self.use_checkpoint else self.stage_one(x)
-                output = torch.utils.checkpoint.checkpoint(self.stage_two, x + h, use_reentrant=False) if self.use_checkpoint else self.stage_two(x + h)
+    def forward(self, x, **kwargs):
+        chunks = kwargs.get('chunks', False)
+        if chunks:
+            x_chunks = x.chunk(chunks, dim=0)
+            h_chunks = [self.stage_one(x_chunk) for x_chunk in x_chunks]
+            output_chunks = [self.stage_two(x_chunk + h_chunk) for x_chunk, h_chunk in zip(x_chunks, h_chunks)]
+            output = torch.cat(output_chunks, dim=0)
+        else:
+            x = self.norm(x)
+            h = self.stage_one(x)
+            output = self.stage_two(x + h)
         return output
 
 
