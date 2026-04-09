@@ -1,5 +1,5 @@
 # general settings
-name: diffusion_vpred_L
+name: diffusion_vpred_z19_2_L
 model_type: ScoreDiffusionVPSDEvpredModel
 num_gpu: 1  # Using 1 GPU - multi-GPU overhead too high for small model
 manual_seed: 0
@@ -16,17 +16,18 @@ datasets:
     dataroot_gt: datasets/varying_IC/T21_cubes
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
-    redshifts: [10,]
+    redshifts: [19,]
     IC_seeds: [0,]
     gt_size: 64
     Npix: 256
     load_full_dataset: true
+    preload_to_gpu: true  # Use CPU preloading for multi-GPU compatibility
     io_backend:
       type: disk
 
     # data loader
     use_shuffle: true
-    num_worker_per_gpu: 2  # Lower since data is in memory
+    num_worker_per_gpu: 0  # Set to 0 when preload_to_gpu and load_full_dataset=true (data already in memory) else 4-8
     batch_size_per_gpu: 8
     dataset_enlarge_ratio: 16
     prefetch_mode: ~
@@ -37,7 +38,7 @@ datasets:
     dataroot_gt: datasets/varying_IC/T21_cubes
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
-    redshifts: [10,]
+    redshifts: [19,]
     IC_seeds: [1,]
     gt_size: 128
     Npix: 256

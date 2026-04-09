@@ -159,7 +159,7 @@ class GroupNorm(torch.nn.Module):
 
     def __init__(self, num_channels, num_groups=32, min_channels_per_group=4, eps=1e-5):
         super().__init__()
-        self.num_groups = min(num_groups, num_channels // min_channels_per_group)
+        self.num_groups = max(min(num_groups, num_channels // min_channels_per_group), 1)
         self.eps = eps
         self.weight = torch.nn.Parameter(torch.ones(num_channels))
         self.bias = torch.nn.Parameter(torch.zeros(num_channels))

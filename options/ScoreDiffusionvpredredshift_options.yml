@@ -1,5 +1,5 @@
 # general settings
-name: diffusion_vpred_redshift_200M_2
+name: diffusion_vpred_redshift_200M_initzeroFalse
 model_type: ScoreDiffusionVPSDEvpredModel
 num_gpu: auto  # Using 1 GPU - multi-GPU overhead too high for small model
 manual_seed: 0
@@ -52,7 +52,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [11,]
-    IC_seeds: [10,]
+    IC_seeds: [11,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -65,7 +65,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [12,]
-    IC_seeds: [10,]
+    IC_seeds: [12,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -78,7 +78,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [13,]
-    IC_seeds: [10,]
+    IC_seeds: [13,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -91,7 +91,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [14,]
-    IC_seeds: [10,]
+    IC_seeds: [14,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -104,7 +104,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [15,]
-    IC_seeds: [10,]
+    IC_seeds: [15,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -117,7 +117,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [16,]
-    IC_seeds: [10,]
+    IC_seeds: [16,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -130,7 +130,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [17,]
-    IC_seeds: [10,]
+    IC_seeds: [17,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -143,7 +143,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [18,]
-    IC_seeds: [10,]
+    IC_seeds: [18,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -156,7 +156,7 @@ datasets:
     dataroot_IC: datasets/varying_IC/IC_cubes
     scale: 4
     redshifts: [19,]
-    IC_seeds: [10,]
+    IC_seeds: [19,]
     gt_size: 64
     Npix: 256
     io_backend:
@@ -177,9 +177,9 @@ network_g:
 
 # path
 path:
-  pretrain_network_g: experiments/diffusion_vpred_redshift_200M_2/models/net_g_28000.pth
+  pretrain_network_g:
   strict_load_g: true
-  resume_state: experiments/diffusion_vpred_redshift_200M_2/training_states/28000.state
+  resume_state:
 
 # training settings
 train:
@@ -191,7 +191,7 @@ train:
 
   scheduler:
     type: MultiStepLR
-    milestones: [8000,]
+    milestones: [8000,20000,32000]
     gamma: 0.5
 
   total_iter: 50000
@@ -213,6 +213,9 @@ val:
     better: 'lower'
   rmse_dsq:
     type: calculate_rmse_dsq
+    better: 'lower'
+  jsd:
+    type: calculate_jsd
     better: 'lower'
 
 # logging settings

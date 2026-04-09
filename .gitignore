@@ -10,6 +10,15 @@ analysis/*
 !analysis/redshift_scaling.py
 !analysis/arbitrary_scaling.py
 
+# Options
+options/*
+!options/example_option.yml
+!options/ScoreDiffusion_options.yml
+!options/ScoreDiffusionvpred_options.yml
+!options/ScoreDiffusionvpredredshift_options.yml
+!options/ASR21cm_GAN_options.yml
+!options/ASR21cm_options.yml
+
 *.DS_Store
 # Slurm job output files and submission scripts
 slurm*

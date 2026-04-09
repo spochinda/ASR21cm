@@ -14,6 +14,8 @@ def weight_init(shape, mode, fan_in, fan_out):
         return np.sqrt(3 / fan_in) * (torch.rand(*shape) * 2 - 1)
     if mode == 'kaiming_normal':
         return np.sqrt(1 / fan_in) * torch.randn(*shape)
+    if mode == 'zero':
+        return torch.zeros(*shape)
     raise ValueError(f'Invalid init mode "{mode}"')
 
 
@@ -322,7 +324,7 @@ class SongUNet(torch.nn.Module):
             eps=1e-6,
             resample_filter=resample_filter,
             resample_proj=True,
-            adaptive_scale=False,
+            adaptive_scale=True,  # changed from False
             init=init,
             init_zero=init_zero,
             init_attn=init_attn,
@@ -366,13 +368,13 @@ class SongUNet(torch.nn.Module):
             res = img_resolution >> level
             if level == len(channel_mult) - 1:
                 self.dec[f'{res}x{res}x{res}_in{cout}_out{cout}_attn{True}_block0'] = UNetBlock(in_channels=cout, out_channels=cout, attention=True, **block_kwargs)
-                self.dec[f'{res}x{res}x{res}_in{cout}_out{cout}_attn{False}_block1'] = UNetBlock(in_channels=cout, out_channels=cout, attention=False, **block_kwargs)
+                self.dec[f'{res}x{res}x{res}_in{cout}_out{cout}_attn{True}_block1'] = UNetBlock(in_channels=cout, out_channels=cout, attention=True, **block_kwargs)  # changed from False to True
             else:
-                self.dec[f'{res}x{res}x{res}_in{cout}_out{cout}_attn{True}_up'] = UNetBlock(in_channels=cout, out_channels=cout, up=True, **block_kwargs)
+                self.dec[f'{res}x{res}x{res}_in{cout}_out{cout}_attn{False}_up'] = UNetBlock(in_channels=cout, out_channels=cout, up=True, **block_kwargs)
             for idx in range(num_blocks + 1):
                 cin = cout + skips.pop()
                 cout = model_channels * mult
-                attn = (idx == num_blocks and res in attn_resolutions)
+                attn = res in attn_resolutions  # (idx == num_blocks and res in attn_resolutions)
                 self.dec[f'{res}x{res}x{res}_in{cin}_out{cout}_attn{attn}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn, **block_kwargs)
             if decoder_type == 'skip' or level == 0:
                 if decoder_type == 'skip' and level < len(channel_mult) - 1:
@@ -388,7 +390,16 @@ class SongUNet(torch.nn.Module):
             tmp = class_labels
             if self.training and self.label_dropout:
                 tmp = tmp * (torch.rand([x.shape[0], 1], device=x.device) >= self.label_dropout).to(tmp.dtype)
+
+            # Original implementation (may cause explosion for large label values)
             emb = emb + self.map_label(tmp * np.sqrt(self.map_label.in_features))
+
+            # OPTION 1: Normalized label embedding (uncomment to prevent explosion)
+            # This normalizes the label embedding to have similar magnitude as noise embedding
+            # Recommended if you see extreme values (>1e10) during validation
+            # label_emb = self.map_label(tmp * np.sqrt(self.map_label.in_features))
+            # label_emb = label_emb / np.sqrt(self.map_label.out_features)  # Scale down by sqrt(output_dim)
+            # emb = emb + label_emb
         if self.map_augment is not None and augment_labels is not None:
             emb = emb + self.map_augment(augment_labels)
         emb = silu(self.map_layer0(emb))

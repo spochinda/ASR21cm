@@ -7,6 +7,7 @@ import os
 import SR21cm.utils as utils
 import torch
 import yaml
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.integrate import simpson as simps
 from scipy.io import loadmat
 from scipy.stats import gaussian_kde
@@ -70,7 +71,7 @@ def plot_rmse_heatmap(data, sizes, redshifts, log=False, title='RMSE Heatmap', l
         vmax = np.log10(vmax)
         label = rf'$\log_{{10}}$ ({label})'
 
-    N = 8
+    N = 6
     vmin = np.floor(vmin * 10) / 10
     vmax = np.ceil(vmax * 10) / 10
 
@@ -89,8 +90,14 @@ def plot_rmse_heatmap(data, sizes, redshifts, log=False, title='RMSE Heatmap', l
     ax.set_xlabel('Scale factor (s)')
     ax.set_ylabel('Redshift (z)')
     ax.set_title(title)
-    cbar = fig.colorbar(im, ax=ax, boundaries=bounds, ticks=bounds)
-    cbar.set_label(label)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes('top', size='5%', pad=0.4)
+    cbar = fig.colorbar(im, cax=cax, orientation='horizontal')
+    cbar.ax.xaxis.set_label_position('top')
+    cbar.ax.xaxis.set_ticks_position('top')
+    cbar.set_label(label, labelpad=14)
+    cbar.set_ticks(bounds)
+
     # Set ticks at the center of each pixel
     ax.set_xticks(np.arange(len(sizes)))
     ax.set_yticks(np.arange(len(redshifts)))
@@ -121,7 +128,7 @@ def plot_rmse_heatmap(data, sizes, redshifts, log=False, title='RMSE Heatmap', l
         )
         ax.add_patch(polygon)
     if legend is not None:
-        ax.legend()  # handles=[polygon], loc='upper right', fontsize='small')
+        ax.legend(fontsize=plt.rcParams['font.size'] - 4, loc='upper right', framealpha=0.6)
     plt.tight_layout()
     if savefig is not None:
         fig.savefig(savefig, bbox_inches='tight')
@@ -133,7 +140,7 @@ def plot_rmse_heatmap(data, sizes, redshifts, log=False, title='RMSE Heatmap', l
 if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if False:
+    if True:
         with open(os.path.join(root_dir, 'good_experiments/ASR21cm_GAN_z_conditional_3/ASR21cm_GAN_options.yml'), mode='r') as f:
             opt = yaml.load(f, Loader=ordered_yaml()[0])
         opt['rank'], opt['world_size'] = get_dist_info()
@@ -284,15 +291,15 @@ if __name__ == '__main__':
         metric3_lr = metric3_lr.numpy()[8:, ::-1, :]
         metric3_hr = metric3_hr.numpy()[8:, ::-1, :]
 
-        print(f'Shapes after slicing: metric_sr: {metric1_sr.shape}, RMSE_sr_dsq: {metric2_sr.shape}, metric_lr: {metric1_lr.shape}, RMSE_lr_dsq: {metric2_lr.shape}', flush=True)
+        # print(f'Shapes after slicing: metric_sr: {metric1_sr.shape}, RMSE_sr_dsq: {metric2_sr.shape}, metric_lr: {metric1_lr.shape}, RMSE_lr_dsq: {metric2_lr.shape}', flush=True)
 
         plt.rcParams.update({
             'text.usetex': True,
             'font.family': 'serif',
             'font.serif': 'cm',
-            'font.size': 22,
+            'font.size': 30,
         })
-        fig, axes = plt.subplots(3, 3, figsize=(24, 24), dpi=300)
+        fig, axes = plt.subplots(3, 3, figsize=(22, 26), dpi=300)
 
         metric1_ratio = (metric1_sr / metric1_lr).mean(axis=0).T
         metric1_sr = metric1_sr.mean(axis=0).T
@@ -393,11 +400,15 @@ if __name__ == '__main__':
         # plt.tight_layout()
         # plt.show()
 
-    print(f'DKL_sr: {DKL_sr.mean(dim=(0))}')
-    print(f'DKL_lr: {DKL_lr.mean(dim=(0))}')
-    print(f'global_signal_hr: {global_signal_hr.mean(dim=(0))}')
-    print(f'global_signal_sr: {global_signal_sr.mean(dim=(0))}')
-    print(f'global_signal_lr: {global_signal_lr.mean(dim=(0))}')
-    print(f'std_hr: {std_hr.mean(dim=(0))}')
-    print(f'std_sr: {std_sr.mean(dim=(0))}')
-    print(f'std_lr: {std_lr.mean(dim=(0))}')
+        row_titles = [r'\textbf{KL Divergence}', r'\textbf{Power Spectrum}', r'\textbf{Global Signal}']
+        nrows, ncols = axes.shape
+
+        for row, title in enumerate(row_titles):
+            # Get the vertical center of the row
+            # axes[row, 0].get_position().y0 is the bottom, y1 is the top
+            pos = axes[row, 0].get_position()
+            y = (pos.y0 + pos.y1) / 2
+            # Place the text at the left of the figure (x=0.02), centered vertically for the row
+            fig.text(0, y, title, va='center', ha='center', fontsize=plt.rcParams['font.size'] + 4, rotation=90)
+        fig.subplots_adjust(hspace=0.4, wspace=0.2)
+        fig.savefig(os.path.join(current_dir, 'RMSE_heatmaps.pdf'), bbox_inches='tight')
