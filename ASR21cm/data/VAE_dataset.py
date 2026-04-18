@@ -15,12 +15,17 @@ class VAEDataset(data.Dataset):
     Returns batches of {'gt': cube, 'T21_lr_mean': mean, 'T21_lr_std': std}
     where gt is normalised by the cube's own mean and std.
 
+    Supports two dataset layouts (select via config keys):
+      varying_IC   — provide IC_seeds and Npix
+      varying_astro — provide run_ids
+
     Args:
         opt (dict): Config keys:
             dataroot_gt (str): Root directory containing T21 .mat files.
             redshifts (list): Redshift values to include.
-            IC_seeds (list): IC seed values to include.
-            Npix (int): Cube side length (used for glob pattern).
+            IC_seeds (list): IC seed values (varying_IC layout).
+            Npix (int): Cube side length (varying_IC layout only).
+            run_ids (list): Run IDs (varying_astro layout).
             gt_size (int): Random crop size. If 0 or absent, no crop.
             load_full_dataset (bool): Pre-load all cubes into CPU RAM.
     """
@@ -31,8 +36,6 @@ class VAEDataset(data.Dataset):
 
         self.path_T21 = opt['dataroot_gt']
         self.redshifts = opt['redshifts']
-        self.IC_seeds = opt['IC_seeds']
-        self.Npix = opt['Npix']
         self.gt_size = opt.get('gt_size', 0)
 
         self.df = self._build_dataframe()
@@ -73,12 +76,34 @@ class VAEDataset(data.Dataset):
 
     def _build_dataframe(self):
         rows = []
-        for seed in self.IC_seeds:
-            for z in self.redshifts:
-                matches = glob.glob(os.path.join(self.path_T21, f'T21_*z{z}_*Npix{self.Npix}_*IC{seed}.mat'))
-                if not matches:
-                    raise FileNotFoundError(f'No T21 file for z={z}, IC={seed} in {self.path_T21}')
-                rows.append({'z': z, 'IC': seed, 'T21': matches[0]})
+        if 'IC_seeds' in self.opt:
+            # varying_IC layout: T21_cube_z{z}__Npix{Npix}_IC{seed}.mat
+            Npix = self.opt['Npix']
+            for seed in self.opt['IC_seeds']:
+                for z in self.redshifts:
+                    matches = glob.glob(os.path.join(self.path_T21, f'T21_*z{z}_*Npix{Npix}_*IC{seed}.mat'))
+                    if not matches:
+                        raise FileNotFoundError(f'No T21 file for z={z}, IC={seed} in {self.path_T21}')
+                    rows.append({'z': z, 'run_id': seed, 'T21': matches[0]})
+        elif 'run_ids' in self.opt or 'run_id_range' in self.opt:
+            # varying_astro layout: T21_cube_z{z}__diffusion_{run_id}.mat
+            if 'run_id_range' in self.opt:
+                start, end = self.opt['run_id_range']
+                run_ids = range(start, end + 1)
+            else:
+                run_ids = self.opt['run_ids']
+            missing = []
+            for run_id in run_ids:
+                for z in self.redshifts:
+                    path = os.path.join(self.path_T21, f'T21_cube_z{z}__diffusion_{run_id}.mat')
+                    if not os.path.exists(path):
+                        missing.append(run_id)
+                        continue
+                    rows.append({'z': z, 'run_id': run_id, 'T21': path})
+            if missing:
+                print(f'Warning: skipped {len(missing)} missing run_ids: {missing}')
+        else:
+            raise ValueError("Dataset opt must contain either 'IC_seeds' or 'run_ids'")
         return pd.DataFrame(rows)
 
     @torch.no_grad()
