@@ -18,6 +18,7 @@ options/*
 !options/ScoreDiffusionvpredredshift_options.yml
 !options/ASR21cm_GAN_options.yml
 !options/ASR21cm_options.yml
+!options/autoencoder_kl.yml
 
 *.DS_Store
 # Slurm job output files and submission scripts

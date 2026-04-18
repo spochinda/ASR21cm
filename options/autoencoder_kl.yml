@@ -1,0 +1,102 @@
+# general settings
+name: AutoencoderKL_test
+model_type: VAEModel
+num_gpu: auto
+manual_seed: 0
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: T21train
+    type: VAEDataset
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
+    redshifts: [10,]
+    run_id_range: [501, 2400]
+    gt_size: 128  # random crop size
+
+    # data loader
+    use_shuffle: true
+    num_worker_per_gpu: 4
+    batch_size_per_gpu: 1
+    dataset_enlarge_ratio: 10
+    prefetch_mode: ~
+
+  val:
+    name: T21val
+    type: VAEDataset
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
+    redshifts: [10,]
+    run_id_range: [2401, 2500]
+    gt_size: 128
+
+# network structure
+network_g:
+  type: AutoencoderKL
+  autoencoder_opt:
+    double_z: true
+    z_channels: 4
+    embed_dim: 4
+    resolution: 128
+    in_channels: 1
+    out_ch: 1
+    ch: 8
+    ch_mult: [1, 2, 4, 4]  # 3 downsamples: 128 -> 64 -> 32 -> 16
+    num_res_blocks: 2
+    attn_resolutions: []
+    dropout: 0.0
+
+# path
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+# training settings
+train:
+  optim_g:
+    type: Adam
+    lr: !!float 4.5e-6
+    weight_decay: 0
+    betas: [0.9, 0.999]
+
+  scheduler:
+    type: MultiStepLR
+    milestones: [50000, 100000]
+    gamma: 0.5
+
+  total_iter: 200000
+  warmup_iter: -1
+
+  # losses
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1.0
+    reduction: mean
+  kl_weight: !!float 1e-6
+  accum_iter: 4  # accumulate gradients over 4 iters to simulate batch size 4
+  grad_clip: 1.0
+
+# validation settings
+val:
+  val_freq: !!float 1000
+  save_img: true
+  pbar: false
+
+  metrics:
+    rmse:
+      type: calculate_rmse
+      better: lower
+
+# logging settings
+logger:
+  print_freq: 100
+  save_checkpoint_freq: !!float 1000
+  use_tb_logger: true
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+dist_params:
+  backend: nccl
+  port: 29500
