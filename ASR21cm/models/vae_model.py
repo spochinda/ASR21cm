@@ -6,6 +6,7 @@ from os import path as osp
 from SR21cm.utils import calculate_power_spectrum
 from tqdm import tqdm
 
+from basicsr.archs import build_network
 from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
 from basicsr.models.sr_model import SRModel
@@ -21,9 +22,27 @@ class VAEModel(SRModel):
         train_opt = self.opt['train']
 
         self.cri_pix = build_loss(train_opt['pixel_opt']).to(self.device)
+        if train_opt.get('dsq_opt'):
+            dsq_opt = dict(train_opt['dsq_opt'])
+            dsq_opt['device'] = str(self.device)
+            self.cri_dsq = build_loss(dsq_opt).to(self.device)
+        else:
+            self.cri_dsq = None
         self.kl_weight = train_opt.get('kl_weight', 1e-6)
         self.grad_clip = train_opt.get('grad_clip', None)
         self.accum_iter = train_opt.get('accum_iter', 1)
+
+        self.ema_decay = train_opt.get('ema_decay', 0)
+        if self.ema_decay > 0:
+            logger = get_root_logger()
+            logger.info(f'Use EMA with decay: {self.ema_decay}')
+            self.net_g_ema = build_network(self.opt['network_g']).to(self.device)
+            load_path = self.opt['path'].get('pretrain_network_g', None)
+            if load_path is not None:
+                self.load_network(self.net_g_ema, load_path, self.opt['path'].get('strict_load_g', True), 'params_ema')
+            else:
+                self.model_ema(0)  # copy net_g weights to net_g_ema
+            self.net_g_ema.eval()
 
         self.setup_optimizers()
         self.setup_schedulers()
@@ -42,18 +61,24 @@ class VAEModel(SRModel):
         l_kl = posterior.kl().mean()
         l_total = l_rec + self.kl_weight * l_kl
 
-        (l_total / self.accum_iter).backward()
+        loss_dict = OrderedDict(l_rec=l_rec, l_kl=l_kl)
+        if self.cri_dsq is not None:
+            l_dsq = self.cri_dsq(reconstruction, self.gt)
+            l_total = l_total + l_dsq
+            loss_dict['l_dsq'] = l_dsq
+        loss_dict['l_total'] = l_total
 
-        loss_dict = OrderedDict(l_rec=l_rec, l_kl=l_kl, l_total=l_total)
+        (l_total / self.accum_iter).backward()
 
         if self.grad_clip is not None:
             grad_norm = torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), self.grad_clip)
             loss_dict['grad_norm'] = grad_norm
 
         if current_iter % self.accum_iter == 0:
-
             self.optimizer_g.step()
             self.optimizer_g.zero_grad()
+            if self.ema_decay > 0:
+                self.model_ema(decay=self.ema_decay)
 
         self.log_dict = self.reduce_loss_dict(loss_dict)
 
@@ -64,10 +89,12 @@ class VAEModel(SRModel):
             super().update_learning_rate(current_iter // self.accum_iter, warmup_iter)
 
     def test(self):
-        self.net_g.eval()
+        net = getattr(self, 'net_g_ema', self.net_g)
+        net.eval()
         with torch.no_grad():
-            self.output, self.posterior = self.net_g(self.gt)
-        self.net_g.train()
+            self.output, self.posterior = net(self.gt)
+        if net is self.net_g:
+            self.net_g.train()
 
     def get_current_visuals(self):
         out_dict = OrderedDict()

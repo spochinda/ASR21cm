@@ -26,7 +26,7 @@ datasets:
     type: VAEDataset
     dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
     redshifts: [10,]
-    run_id_range: [2401, 2500]
+    run_id_range: [2401, 2410]
     gt_size: 128
 
 # network structure
@@ -72,13 +72,17 @@ train:
     type: L1Loss
     loss_weight: 1.0
     reduction: mean
+  dsq_opt:
+    type: dsq_loss
+    loss_weight: 1.0
   kl_weight: !!float 1e-6
   accum_iter: 4  # accumulate gradients over 4 iters to simulate batch size 4
   grad_clip: 1.0
+  ema_decay: 0.999
 
 # validation settings
 val:
-  val_freq: !!float 1000
+  val_freq: !!float 5000
   save_img: true
   pbar: false
 
@@ -90,7 +94,7 @@ val:
 # logging settings
 logger:
   print_freq: 100
-  save_checkpoint_freq: !!float 1000
+  save_checkpoint_freq: !!float 5000
   use_tb_logger: true
   wandb:
     project: ~
