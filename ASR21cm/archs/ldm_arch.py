@@ -12,6 +12,56 @@ def Normalize(num_channels):
     return nn.GroupNorm(num_groups=num_groups, num_channels=num_channels, eps=1e-6, affine=True)
 
 
+@ARCH_REGISTRY.register()
+class NLayerDiscriminator3D(nn.Module):
+    """3-D PatchGAN discriminator (adapted from taming-transformers NLayerDiscriminator).
+
+    Produces a spatial map of real/fake logits rather than a single scalar,
+    so each output element covers a receptive-field 'patch' of the input.
+    Uses GroupNorm (via Normalize()) instead of BatchNorm so it is stable
+    at batch_size=1.
+
+    Args:
+        input_nc (int): Number of input channels.
+        ndf      (int): Base number of discriminator filters.
+        n_layers (int): Number of strided Conv3d downsampling layers.
+    """
+
+    def __init__(self, input_nc=1, ndf=64, n_layers=3):
+        super().__init__()
+
+        kw = 4
+        padw = 1
+        sequence = [
+            nn.Conv3d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
+            nn.LeakyReLU(0.2, True),
+        ]
+
+        nf_mult = 1
+        for n in range(1, n_layers):
+            nf_mult_prev = nf_mult
+            nf_mult = min(2**n, 8)
+            sequence += [
+                nn.Conv3d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=False),
+                Normalize(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True),
+            ]
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2**n_layers, 8)
+        sequence += [
+            nn.Conv3d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=False),
+            Normalize(ndf * nf_mult),
+            nn.LeakyReLU(0.2, True),
+        ]
+
+        sequence += [nn.Conv3d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]
+        self.main = nn.Sequential(*sequence)
+
+    def forward(self, x):
+        return self.main(x)
+
+
 class Upsample(nn.Module):
 
     def __init__(self, in_channels, with_conv):
