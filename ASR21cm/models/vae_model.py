@@ -274,8 +274,8 @@ class VAEModel(SRModel):
             self.test()
 
             visuals = self.get_current_visuals()
-            metric_data['reconstruction'] = visuals['reconstruction']
-            metric_data['gt'] = visuals['gt']
+            metric_data['sr'] = visuals['reconstruction']
+            metric_data['hr'] = visuals['gt']
 
             del self.gt
             del self.output

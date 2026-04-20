@@ -49,7 +49,7 @@ network_g:
 network_d:
   type: NLayerDiscriminator3D
   input_nc: 1      # must match network_g out_ch
-  ndf: 64          # base number of discriminator filters
+  ndf: 32          # base number of discriminator filters
   n_layers: 3      # number of strided downsampling layers
 
 # path
@@ -62,7 +62,7 @@ path:
 train:
   optim_g:
     type: Adam
-    lr: !!float 4.5e-6
+    lr: !!float 2e-5
     weight_decay: 0
     betas: [0.9, 0.999]
 
@@ -82,13 +82,13 @@ train:
   dsq_opt:
     type: dsq_loss
     loss_weight: 1.0
-  kl_weight: !!float 1e-6
+  kl_weight: !!float 1e-4
   accum_iter: 4  # accumulate gradients over 4 iters to simulate batch size 4
   grad_clip: 1.0
   ema_decay: 0.999
 
   # GAN settings (used when network_d is defined)
-  disc_start: 12500          # optimiser steps before discriminator activates (= 50000 raw iters / accum_iter=4)
+  disc_start: 1251           # optimiser steps before discriminator activates (= 50000 raw iters / accum_iter=4)
   disc_factor: 1.0           # global scale applied to all discriminator losses
   disc_loss: hinge           # hinge | vanilla
   use_adaptive_weight: true  # true: gradient-ratio weight; false: fixed disc_weight
@@ -101,7 +101,7 @@ train:
   # discriminator optimizer (required when network_d is defined)
   optim_d:
     type: Adam
-    lr: !!float 4.5e-6
+    lr: !!float 2e-5
     weight_decay: 0
     betas: [0.9, 0.999]
 
