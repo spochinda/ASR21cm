@@ -161,7 +161,7 @@ class VAEModel(SRModel):
         loss_dict['l_kl'] = l_kl
 
         if self.cri_dsq is not None:
-            l_dsq = self.cri_dsq(reconstruction, self.gt)
+            l_dsq = self.cri_dsq(torch.sinh(reconstruction), torch.sinh(self.gt))
             l_g_total = l_g_total + l_dsq
             loss_dict['l_dsq'] = l_dsq
 
@@ -274,8 +274,6 @@ class VAEModel(SRModel):
             self.test()
 
             visuals = self.get_current_visuals()
-            metric_data['sr'] = visuals['reconstruction']
-            metric_data['hr'] = visuals['gt']
 
             del self.gt
             del self.output
@@ -287,9 +285,16 @@ class VAEModel(SRModel):
 
             gt_cube = visuals['gt']
             rec_cube = visuals['reconstruction']
-            if 'mean' in visuals:
+            norm = self.opt['datasets']['val'].get('norm', 'zscore')
+            if norm == 'arcsinh':
+                gt_cube = torch.sinh(gt_cube)
+                rec_cube = torch.sinh(rec_cube)
+            elif 'mean' in visuals:
                 gt_cube = gt_cube * visuals['std'] + visuals['mean']
                 rec_cube = rec_cube * visuals['std'] + visuals['mean']
+
+            metric_data['sr'] = rec_cube
+            metric_data['hr'] = gt_cube
 
             if save_img:
                 with torch.no_grad():

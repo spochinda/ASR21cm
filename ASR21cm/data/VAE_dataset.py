@@ -12,8 +12,14 @@ from basicsr.utils.registry import DATASET_REGISTRY
 class VAEDataset(data.Dataset):
     """Dataset for VAE training: loads T21 brightness temperature cubes.
 
+    Normalisation is controlled by the ``norm`` key:
+      ``zscore``  (default) — per-cube (x - mean) / std
+      ``arcsinh``           — arcsinh(x / scale), where scale defaults to 1.0
+                              or can be set via ``norm_scale`` (e.g. a global std)
+
     Returns batches of {'gt': cube, 'T21_lr_mean': mean, 'T21_lr_std': std}
-    where gt is normalised by the cube's own mean and std.
+    (mean/std are the per-cube statistics regardless of norm mode, for inverse
+    transforms if needed).
 
     Supports two dataset layouts (select via config keys):
       varying_IC   — provide IC_seeds and Npix
@@ -27,6 +33,9 @@ class VAEDataset(data.Dataset):
             Npix (int): Cube side length (varying_IC layout only).
             run_ids (list): Run IDs (varying_astro layout).
             gt_size (int): Random crop size. If 0 or absent, no crop.
+            norm (str): 'zscore' (default) or 'arcsinh'.
+            norm_scale (float): Divisor before arcsinh (arcsinh mode only,
+                default 1.0). Set to a global std to get arcsinh z-scores.
             load_full_dataset (bool): Pre-load all cubes into CPU RAM.
     """
 
@@ -37,6 +46,11 @@ class VAEDataset(data.Dataset):
         self.path_T21 = opt['dataroot_gt']
         self.redshifts = opt['redshifts']
         self.gt_size = opt.get('gt_size', 0)
+        self.norm = opt.get('norm', 'zscore')
+        self.norm_scale = float(opt.get('norm_scale', 1.0))
+
+        if self.norm not in ('zscore', 'arcsinh'):
+            raise ValueError(f"norm must be 'zscore' or 'arcsinh', got '{self.norm}'")
 
         self.df = self._build_dataframe()
 
@@ -64,7 +78,11 @@ class VAEDataset(data.Dataset):
 
         mean = T21.mean(dim=(1, 2, 3), keepdim=True)
         std = T21.std(dim=(1, 2, 3), keepdim=True).clamp(min=1e-8)
-        T21 = (T21 - mean) / std
+
+        if self.norm == 'zscore':
+            T21 = (T21 - mean) / std
+        else:  # arcsinh
+            T21 = torch.arcsinh(T21 / self.norm_scale)
 
         return {'gt': T21, 'T21_lr_mean': mean, 'T21_lr_std': std}
 
