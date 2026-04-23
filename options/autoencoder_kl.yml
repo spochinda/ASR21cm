@@ -1,5 +1,5 @@
 # general settings
-name: AutoencoderKL_dsq
+name: AutoencoderKL_GAN
 model_type: VAEModel
 num_gpu: auto
 manual_seed: 0
@@ -9,10 +9,10 @@ datasets:
   train:
     name: T21train
     type: VAEDataset
-    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
+    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
     redshifts: [10,]
     run_id_range: [501, 2400]
-    gt_size: 128  # random crop size
+    gt_size: 64  # random crop size
     norm: arcsinh
 
     # data loader
@@ -25,10 +25,10 @@ datasets:
   val:
     name: T21val
     type: VAEDataset
-    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
+    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
     redshifts: [10,]
     run_id_range: [2401, 2410]
-    gt_size: 128
+    gt_size: 64
     norm: arcsinh
 
 # network structure
@@ -38,21 +38,21 @@ network_g:
     double_z: true
     z_channels: 8
     embed_dim: 8
-    resolution: 128
+    resolution: 64
     in_channels: 1
     out_ch: 1
     ch: 16
-    ch_mult: [1, 2, 4, 4]  # 3 downsamples: 128 -> 64 -> 32 -> 16
+    ch_mult: [1, 2, 4, 4]  # 3 downsamples: 64 -> 32 -> 16 -> 8
     num_res_blocks: 2
-    attn_resolutions: [16]
+    attn_resolutions: [8]
     dropout: 0.0
 
 # PatchGAN discriminator (comment out to disable GAN training)
-#network_d:
-#  type: NLayerDiscriminator3D
-#  input_nc: 1      # must match network_g out_ch
-#  ndf: 32          # base number of discriminator filters
-#  n_layers: 3      # number of strided downsampling layers
+network_d:
+  type: NLayerDiscriminator3D
+  input_nc: 1      # must match network_g out_ch
+  ndf: 32          # base number of discriminator filters
+  n_layers: 3      # number of strided downsampling layers
 
 # path
 path:
@@ -71,7 +71,7 @@ train:
   scheduler:
     type: MultiStepLR
     milestones: [50000, 100000]
-    gamma: 0.5
+    gamma: 1.0 # disable LR decay for now
 
   total_iter: 200000
   warmup_iter: -1
@@ -81,31 +81,31 @@ train:
     type: L1Loss
     loss_weight: 1.0
     reduction: mean
-  dsq_opt:
-    type: dsq_loss
-    loss_weight: 0.1
-  kl_weight: !!float 1e-3
+  # dsq_opt:
+  #  type: dsq_loss
+  #  loss_weight: 0.1
+  kl_weight: !!float 1e-2
   accum_iter: 4  # accumulate gradients over 4 iters to simulate batch size 4
-  grad_clip: 1.0
+  grad_clip: 50.0
   ema_decay: 0.999
 
   # GAN settings (used when network_d is defined)
-  #disc_start: 200000
-  #disc_factor: 1.0
-  #disc_loss: hinge
-  #use_adaptive_weight: true
-  #disc_weight: 1.0
+  disc_start: 0
+  disc_factor: 1.0
+  disc_loss: hinge
+  use_adaptive_weight: true
+  disc_weight: 1.0
 
   # learned log-variance for reconstruction loss (NLL formulation)
   use_logvar: false
   logvar_init: 0.0
 
   # discriminator optimizer (required when network_d is defined)
-  #optim_d:
-  #  type: Adam
-  #  lr: !!float 2e-5
-  #  weight_decay: 0
-  #  betas: [0.9, 0.999]
+  optim_d:
+    type: Adam
+    lr: !!float 2e-5
+    weight_decay: 0
+    betas: [0.9, 0.999]
 
 # validation settings
 val:

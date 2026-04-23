@@ -160,7 +160,7 @@ class VAEModel(SRModel):
         l_kl = posterior.kl().mean()
         l_g_total = rec_loss_for_weight + self.kl_weight * l_kl
         loss_dict['l_rec'] = l_rec
-        loss_dict['l_kl'] = l_kl
+        loss_dict['l_kl'] = self.kl_weight * l_kl
 
         if self.cri_dsq is not None:
             l_dsq = self.cri_dsq(torch.sinh(reconstruction), torch.sinh(self.gt))
