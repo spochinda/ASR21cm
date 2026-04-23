@@ -1,5 +1,5 @@
 # general settings
-name: AutoencoderKL_no_dsq
+name: AutoencoderKL_dsq
 model_type: VAEModel
 num_gpu: auto
 manual_seed: 0
@@ -9,7 +9,7 @@ datasets:
   train:
     name: T21train
     type: VAEDataset
-    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
     redshifts: [10,]
     run_id_range: [501, 2400]
     gt_size: 128  # random crop size
@@ -25,7 +25,7 @@ datasets:
   val:
     name: T21val
     type: VAEDataset
-    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
+    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
     redshifts: [10,]
     run_id_range: [2401, 2410]
     gt_size: 128
@@ -81,10 +81,10 @@ train:
     type: L1Loss
     loss_weight: 1.0
     reduction: mean
-  #dsq_opt:
-  #  type: dsq_loss
-  #  loss_weight: 1.0
-  kl_weight: !!float 1e-4
+  dsq_opt:
+    type: dsq_loss
+    loss_weight: 0.1
+  kl_weight: !!float 1e-3
   accum_iter: 4  # accumulate gradients over 4 iters to simulate batch size 4
   grad_clip: 1.0
   ema_decay: 0.999

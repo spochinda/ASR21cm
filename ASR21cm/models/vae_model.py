@@ -317,8 +317,8 @@ class VAEModel(SRModel):
 
                     slice_idx = gt_cube.shape[-1] // 2
                     for i in range(b):
-                        vmin = min(rec_cube[i, 0, :, :, slice_idx].min(), gt_cube[i, 0, :, :, slice_idx].min())
-                        vmax = max(rec_cube[i, 0, :, :, slice_idx].max(), gt_cube[i, 0, :, :, slice_idx].max())
+                        vmin = gt_cube[i, 0, :, :, slice_idx].min()  # min(rec_cube[i, 0, :, :, slice_idx].min(), gt_cube[i, 0, :, :, slice_idx].min())
+                        vmax = gt_cube[i, 0, :, :, slice_idx].max()  # max(rec_cube[i, 0, :, :, slice_idx].max(), gt_cube[i, 0, :, :, slice_idx].max())
 
                         axes[0, i].imshow(gt_cube[i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
                         axes[0, i].set_title('GT')
