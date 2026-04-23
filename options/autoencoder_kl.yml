@@ -9,7 +9,7 @@ datasets:
   train:
     name: T21train
     type: VAEDataset
-    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
+    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
     redshifts: [10,]
     run_id_range: [501, 2400]
     gt_size: 128  # random crop size
@@ -25,7 +25,7 @@ datasets:
   val:
     name: T21val
     type: VAEDataset
-    dataroot_gt: /home/sp2053/rds/hpc-work/ASR21cm/datasets/varying_astro/T21_cubes/
+    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
     redshifts: [10,]
     run_id_range: [2401, 2410]
     gt_size: 128
@@ -48,11 +48,11 @@ network_g:
     dropout: 0.0
 
 # PatchGAN discriminator (comment out to disable GAN training)
-network_d:
-  type: NLayerDiscriminator3D
-  input_nc: 1      # must match network_g out_ch
-  ndf: 32          # base number of discriminator filters
-  n_layers: 3      # number of strided downsampling layers
+#network_d:
+#  type: NLayerDiscriminator3D
+#  input_nc: 1      # must match network_g out_ch
+#  ndf: 32          # base number of discriminator filters
+#  n_layers: 3      # number of strided downsampling layers
 
 # path
 path:
@@ -90,22 +90,22 @@ train:
   ema_decay: 0.999
 
   # GAN settings (used when network_d is defined)
-  disc_start: 200000 # 1251           # optimiser steps before discriminator activates (= 50000 raw iters / accum_iter=4)
-  disc_factor: 1.0           # global scale applied to all discriminator losses
-  disc_loss: hinge           # hinge | vanilla
-  use_adaptive_weight: true  # true: gradient-ratio weight; false: fixed disc_weight
-  disc_weight: 1.0           # scales adaptive ratio (always) or replaces it (use_adaptive_weight: false)
+  #disc_start: 200000
+  #disc_factor: 1.0
+  #disc_loss: hinge
+  #use_adaptive_weight: true
+  #disc_weight: 1.0
 
   # learned log-variance for reconstruction loss (NLL formulation)
   use_logvar: false
   logvar_init: 0.0
 
   # discriminator optimizer (required when network_d is defined)
-  optim_d:
-    type: Adam
-    lr: !!float 2e-5
-    weight_decay: 0
-    betas: [0.9, 0.999]
+  #optim_d:
+  #  type: Adam
+  #  lr: !!float 2e-5
+  #  weight_decay: 0
+  #  betas: [0.9, 0.999]
 
 # validation settings
 val:

@@ -373,7 +373,9 @@ class AutoencoderKL(nn.Module):
         else:
             z = posterior.mode()
         dec = self.decode(z)
-        return dec, posterior
+        # Return the raw moments tensor instead of the DiagonalGaussianDistribution
+        # object so that DataParallel can gather outputs across GPUs.
+        return dec, posterior.parameters
 
     def get_last_layer(self):
         return self.decoder.conv_out.weight

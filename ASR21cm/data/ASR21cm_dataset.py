@@ -1,11 +1,11 @@
 import numpy as np
 import os
 import pandas as pd
-import SR21cm.utils as utils
+import time
+# import SR21cm.utils as utils
 import torch
 from functools import partial
 from scipy.io import loadmat
-import time
 
 from basicsr.utils.registry import DATASET_REGISTRY
 
@@ -171,11 +171,15 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         # T21, delta, vbv, T21_lr = utils.augment_dataset(T21, delta, vbv, T21_lr, n=n_augment)
         T21_lr_mean = torch.mean(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
         T21_lr_std = torch.std(T21_lr, dim=(1, 2, 3, 4), keepdim=True)
-        T21_lr, _, _ = utils.normalize(T21_lr, mode='standard')
-        T21, _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
+        T21_lr = (T21_lr - T21_lr_mean) / T21_lr_std  # , _, _ = utils.normalize(T21_lr, mode='standard')
+        T21 = (T21 - T21_lr_mean) / T21_lr_std  # , _, _ = utils.normalize(T21, mode='standard', x_mean=T21_lr_mean, x_std=T21_lr_std)
         if conditional_cubes:
-            delta, _, _ = utils.normalize(delta, mode='standard')
-            vbv, _, _ = utils.normalize(vbv, mode='standard')
+            delta_mean = torch.mean(delta, dim=(1, 2, 3, 4), keepdim=True)
+            delta_std = torch.std(delta, dim=(1, 2, 3, 4), keepdim=True)
+            delta = (delta - delta_mean) / delta_std  # , _, _ = utils.normalize(delta, mode='standard')
+            vbv_mean = torch.mean(vbv, dim=(1, 2, 3, 4), keepdim=True)
+            vbv_std = torch.std(vbv, dim=(1, 2, 3, 4), keepdim=True)
+            vbv = (vbv - vbv_mean) / vbv_std  # , _, _ = utils.normalize(vbv, mode='standard')
 
         conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     elif phase == 'val':
@@ -193,13 +197,31 @@ def collate_fn(batch, cut_factor, scale_min, scale_max, n_augment, gt_size, h_lr
         T21_lr = [torch.nn.functional.interpolate(T21, size=size, mode='trilinear') for size in h_lr]
         T21_lr_mean = [torch.mean(T21_lr_i, dim=(1, 2, 3, 4), keepdim=True) for T21_lr_i in T21_lr]
         T21_lr_std = [torch.std(T21_lr_i, dim=(1, 2, 3, 4), keepdim=True) for T21_lr_i in T21_lr]
-        T21_lr = [utils.normalize(T21_lr_i, mode='standard')[0] for T21_lr_i in T21_lr]
-        T21 = [utils.normalize(T21, mode='standard', x_mean=T21_lr_mean[i], x_std=T21_lr_std[i])[0] for i in range(len(h_lr))]
+        _lr = []
+        _hr = []
+        for i in range(len(h_lr)):
+            T21_lr_i = (T21_lr[i] - T21_lr_mean[i]) / T21_lr_std[i]
+            T21_i = (T21 - T21_lr_mean[i]) / T21_lr_std[i]
+            _lr.append(T21_lr_i)
+            _hr.append(T21_i)
+        T21_lr = _lr
+        T21 = _hr
+        # T21_lr = [utils.normalize(T21_lr_i, mode='standard')[0] for T21_lr_i in T21_lr]
+        # T21 = [utils.normalize(T21, mode='standard', x_mean=T21_lr_mean[i], x_std=T21_lr_std[i])[0] for i in range(len(h_lr))]
         labels = [labels for i in range(len(h_lr))]
 
         if conditional_cubes:
-            delta = [utils.normalize(delta, mode='standard')[0] for i in range(len(h_lr))]
-            vbv = [utils.normalize(vbv, mode='standard')[0] for i in range(len(h_lr))]
+            _delta = []
+            _vbv = []
+            for i in range(len(h_lr)):
+                delta_i = (delta - delta_mean) / delta_std
+                vbv_i = (vbv - vbv_mean) / vbv_std
+                _delta.append(delta_i)
+                _vbv.append(vbv_i)
+            delta = _delta
+            vbv = _vbv
+            # delta = [utils.normalize(delta, mode='standard')[0] for i in range(len(h_lr))]
+            # vbv = [utils.normalize(vbv, mode='standard')[0] for i in range(len(h_lr))]
 
         conditional_cubes = {'delta': delta, 'vbv': vbv} if conditional_cubes else {}
     else:

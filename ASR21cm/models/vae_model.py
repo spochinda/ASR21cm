@@ -4,9 +4,10 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 from os import path as osp
-from SR21cm.utils import calculate_power_spectrum
 from tqdm import tqdm
 
+from ASR21cm.archs.ldm_arch import DiagonalGaussianDistribution
+from ASR21cm.utils import calculate_power_spectrum
 from basicsr.archs import build_network
 from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
@@ -135,7 +136,8 @@ class VAEModel(SRModel):
             self.T21_lr_std = data['T21_lr_std'].to(self.device)
 
     def optimize_parameters(self, current_iter):
-        reconstruction, posterior = self.net_g(self.gt)
+        reconstruction, posterior_params = self.net_g(self.gt)
+        posterior = DiagonalGaussianDistribution(posterior_params)
         self.output = reconstruction
 
         loss_dict = OrderedDict()
@@ -167,20 +169,24 @@ class VAEModel(SRModel):
 
         if self.net_d is not None:
             disc_factor = _adopt_weight(self.disc_factor, current_iter // self.accum_iter, threshold=self.disc_start)
+        else:
+            disc_factor = 0.0
+
+        if self.net_d is not None and disc_factor > 0.0:
+            for p in self.net_d.parameters():
+                p.requires_grad = False
+
             logits_fake = self.net_d(reconstruction.contiguous())
             g_loss = -torch.mean(logits_fake)
 
-            if disc_factor > 0.0:
-                if self.use_adaptive_weight:
-                    try:
-                        d_weight = self.calculate_adaptive_weight(rec_loss_for_weight, g_loss, last_layer=self.net_g.get_last_layer())
-                    except RuntimeError:
-                        assert not self.training
-                        d_weight = torch.tensor(0.0)
-                else:
-                    d_weight = self.disc_weight
+            if self.use_adaptive_weight:
+                try:
+                    d_weight = self.calculate_adaptive_weight(rec_loss_for_weight, g_loss, last_layer=self.net_g.get_last_layer())
+                except RuntimeError:
+                    assert not self.training
+                    d_weight = torch.tensor(0.0)
             else:
-                d_weight = torch.tensor(0.0)
+                d_weight = self.disc_weight
 
             l_g_gan = d_weight * disc_factor * g_loss
             l_g_total = l_g_total + l_g_gan
@@ -203,7 +209,7 @@ class VAEModel(SRModel):
         # ------------------------------------------------------------------ #
         # Discriminator update                                                 #
         # ------------------------------------------------------------------ #
-        if self.net_d is not None:
+        if self.net_d is not None and disc_factor > 0.0:
             for p in self.net_d.parameters():
                 p.requires_grad = True
 
@@ -241,7 +247,8 @@ class VAEModel(SRModel):
         net = getattr(self, 'net_g_ema', self.net_g)
         net.eval()
         with torch.no_grad():
-            self.output, self.posterior = net(self.gt)
+            self.output, posterior_params = net(self.gt)
+            self.posterior = DiagonalGaussianDistribution(posterior_params)
         if net is self.net_g:
             self.net_g.train()
 

@@ -3,10 +3,10 @@ import numpy as np
 import os.path as osp
 import torch
 from collections import OrderedDict
-from SR21cm.utils import calculate_power_spectrum
 from tqdm import tqdm
 
 from ASR21cm.archs.arch_utils import make_coord
+from ASR21cm.utils import calculate_power_spectrum
 from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
 from basicsr.models.srgan_model import SRGANModel

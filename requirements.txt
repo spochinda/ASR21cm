@@ -1,6 +1,12 @@
 basicsr
+
+einops # new
+matplotlib # new
 numpy
 opencv-python
+pandas # new
+psutil # new
 requests
+timm # new
 torch
 torchvision

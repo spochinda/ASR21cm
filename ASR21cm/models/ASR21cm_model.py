@@ -5,10 +5,10 @@ import time
 import torch
 from collections import OrderedDict
 from os import path as osp
-from SR21cm.utils import calculate_power_spectrum
 from tqdm import tqdm
 
 from ASR21cm.archs.arch_utils import make_coord
+from ASR21cm.utils import calculate_power_spectrum
 from basicsr.archs import build_network
 from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
