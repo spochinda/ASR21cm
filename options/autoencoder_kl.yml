@@ -1,5 +1,5 @@
 # general settings
-name: AutoencoderKL_GAN
+name: AutoencoderKL_GAN_4
 model_type: VAEModel
 num_gpu: auto
 manual_seed: 0
@@ -18,7 +18,7 @@ datasets:
     # data loader
     use_shuffle: true
     num_worker_per_gpu: 4
-    batch_size_per_gpu: 1
+    batch_size_per_gpu: 4
     dataset_enlarge_ratio: 10
     prefetch_mode: ~
 
@@ -84,13 +84,14 @@ train:
   # dsq_opt:
   #  type: dsq_loss
   #  loss_weight: 0.1
-  kl_weight: !!float 1e-2
+  kl_weight: !!float 1e-3
+  kl_anneal_iters: 1000   # linearly ramp kl_weight from 0 to kl_weight over this many iters
   accum_iter: 4  # accumulate gradients over 4 iters to simulate batch size 4
-  grad_clip: 50.0
+  grad_clip: 5.0
   ema_decay: 0.999
 
   # GAN settings (used when network_d is defined)
-  disc_start: 0
+  disc_start: 250
   disc_factor: 1.0
   disc_loss: hinge
   use_adaptive_weight: true

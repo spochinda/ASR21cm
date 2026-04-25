@@ -61,6 +61,7 @@ class VAEModel(SRModel):
         else:
             self.cri_dsq = None
         self.kl_weight = train_opt.get('kl_weight', 1e-6)
+        self.kl_anneal_iters = train_opt.get('kl_anneal_iters', 0)
         self.grad_clip = train_opt.get('grad_clip', None)
         self.accum_iter = train_opt.get('accum_iter', 1)
 
@@ -126,7 +127,7 @@ class VAEModel(SRModel):
         rec_grads = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
         g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
         d_weight = torch.norm(rec_grads) / (torch.norm(g_grads) + 1e-4)
-        d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
+        d_weight = torch.clamp(d_weight, 0.0, 1.0).detach()
         return d_weight * self.disc_weight
 
     def feed_data(self, data):
@@ -158,9 +159,10 @@ class VAEModel(SRModel):
             rec_loss_for_weight = l_rec
 
         l_kl = posterior.kl().mean()
-        l_g_total = rec_loss_for_weight + self.kl_weight * l_kl
+        kl_ramp = min(1.0, current_iter / self.kl_anneal_iters) if self.kl_anneal_iters > 0 else 1.0
+        l_g_total = rec_loss_for_weight + kl_ramp * self.kl_weight * l_kl
         loss_dict['l_rec'] = l_rec
-        loss_dict['l_kl'] = self.kl_weight * l_kl
+        loss_dict['l_kl'] = kl_ramp * self.kl_weight * l_kl
 
         if self.cri_dsq is not None:
             l_dsq = self.cri_dsq(torch.sinh(reconstruction), torch.sinh(self.gt))
@@ -229,7 +231,9 @@ class VAEModel(SRModel):
         self.log_dict = self.reduce_loss_dict(loss_dict)
 
     def update_learning_rate(self, current_iter, warmup_iter=-1):
-        if current_iter % self.accum_iter == 0:
+        # Step the scheduler one iteration after the optimizer to satisfy PyTorch's
+        # required ordering (optimizer.step before scheduler.step).
+        if current_iter > 0 and current_iter % self.accum_iter == 0:
             super().update_learning_rate(current_iter // self.accum_iter, warmup_iter)
 
     def save(self, epoch, current_iter):
