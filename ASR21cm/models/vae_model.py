@@ -58,10 +58,13 @@ class VAEModel(SRModel):
             dsq_opt = dict(train_opt['dsq_opt'])
             dsq_opt['device'] = str(self.device)
             self.cri_dsq = build_loss(dsq_opt).to(self.device)
+            self.dsq_start = train_opt.get('dsq_start', 0)
         else:
             self.cri_dsq = None
+            self.dsq_start = 0
         self.kl_weight = train_opt.get('kl_weight', 1e-6)
         self.kl_anneal_iters = train_opt.get('kl_anneal_iters', 0)
+        self.free_bits = train_opt.get('free_bits', 0.0)
         self.grad_clip = train_opt.get('grad_clip', None)
         self.accum_iter = train_opt.get('accum_iter', 1)
 
@@ -77,9 +80,13 @@ class VAEModel(SRModel):
         if self.opt.get('network_d') is not None:
             self.net_d = build_network(self.opt['network_d']).to(self.device)
             self.net_d.apply(_weights_init)
+            load_path_d = self.opt['path'].get('pretrain_network_d', None)
+            if load_path_d is not None and osp.exists(load_path_d):
+                self.load_network(self.net_d, load_path_d, self.opt['path'].get('strict_load_d', True))
             self.net_d.train()
 
             self.disc_start = train_opt.get('disc_start', 0)
+            self.net_d_init_iters = train_opt.get('net_d_init_iters', 0)
             self.disc_factor = train_opt.get('disc_factor', 1.0)
             self.disc_weight = train_opt.get('disc_weight', 1.0)
             self.use_adaptive_weight = train_opt.get('use_adaptive_weight', True)
@@ -123,6 +130,27 @@ class VAEModel(SRModel):
             self.optimizer_d = self.get_optimizer(optim_type_d, self.net_d.parameters(), **train_opt['optim_d'])
             self.optimizers.append(self.optimizer_d)
 
+    def resume_training(self, resume_state):
+        """Resume optimizers/schedulers, tolerating a saved state with fewer
+        optimizers than the current model (e.g. resuming a non-GAN checkpoint
+        into a GAN model — generator optimizer is restored, discriminator
+        optimizer is left at its freshly-initialised state)."""
+        logger = get_root_logger()
+        resume_optimizers = resume_state['optimizers']
+        resume_schedulers = resume_state['schedulers']
+        if len(resume_optimizers) != len(self.optimizers):
+            logger.warning(f'Optimizer count mismatch: checkpoint has {len(resume_optimizers)}, '
+                           f'model has {len(self.optimizers)}. Restoring the first '
+                           f'{len(resume_optimizers)} optimizer(s) only.')
+        for i, o in enumerate(resume_optimizers):
+            self.optimizers[i].load_state_dict(o)
+        if len(resume_schedulers) != len(self.schedulers):
+            logger.warning(f'Scheduler count mismatch: checkpoint has {len(resume_schedulers)}, '
+                           f'model has {len(self.schedulers)}. Restoring the first '
+                           f'{len(resume_schedulers)} scheduler(s) only.')
+        for i, s in enumerate(resume_schedulers):
+            self.schedulers[i].load_state_dict(s)
+
     def calculate_adaptive_weight(self, rec_loss, g_loss, last_layer):
         rec_grads = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
         g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
@@ -158,13 +186,27 @@ class VAEModel(SRModel):
         else:
             rec_loss_for_weight = l_rec
 
-        l_kl = posterior.kl().mean()
+        # per-element KL: posterior.kl() sums over spatial dims → shape (B,),
+        # which is wrong for free bits. Compute element-wise here instead.
+        kl_elem = 0.5 * (posterior.mean.pow(2) + posterior.var - 1.0 - posterior.logvar)  # (B, C, H, W, D)
+        if self.free_bits > 0:
+            # clamp per element: dims with KL < free_bits get zero gradient
+            l_kl = kl_elem.clamp(min=self.free_bits).mean()
+        else:
+            l_kl = kl_elem.mean()
         kl_ramp = min(1.0, current_iter / self.kl_anneal_iters) if self.kl_anneal_iters > 0 else 1.0
         l_g_total = rec_loss_for_weight + kl_ramp * self.kl_weight * l_kl
         loss_dict['l_rec'] = l_rec
         loss_dict['l_kl'] = kl_ramp * self.kl_weight * l_kl
+        # Latent diagnostics — logged but not part of the loss
+        with torch.no_grad():
+            loss_dict['kl_raw'] = kl_elem.mean()  # per-element KL before clamp/weight
+            loss_dict['mu_abs'] = posterior.mean.abs().mean()  # |μ|; 0 → encoder collapsed to prior
+            loss_dict['sigma'] = posterior.std.mean()  # σ; 1 → posterior ≈ prior
+            if self.free_bits > 0:
+                loss_dict['active_pct'] = (kl_elem > self.free_bits).float().mean() * 100  # % dims above floor
 
-        if self.cri_dsq is not None:
+        if self.cri_dsq is not None and current_iter >= self.dsq_start:
             l_dsq = self.cri_dsq(torch.sinh(reconstruction), torch.sinh(self.gt))
             l_g_total = l_g_total + l_dsq
             loss_dict['l_dsq'] = l_dsq
@@ -174,7 +216,7 @@ class VAEModel(SRModel):
         else:
             disc_factor = 0.0
 
-        if self.net_d is not None and disc_factor > 0.0:
+        if self.net_d is not None and disc_factor > 0.0 and current_iter > self.net_d_init_iters:
             for p in self.net_d.parameters():
                 p.requires_grad = False
 
@@ -277,6 +319,9 @@ class VAEModel(SRModel):
             self.metric_results = {metric: 0 for metric in self.metric_results}
 
         metric_data = dict()
+        val_l_rec_sum = 0.0
+        per_sample_rmse = []
+        rec_std_ratio_sum = 0.0
         if use_pbar:
             pbar = tqdm(total=len(dataloader), unit='cube')
 
@@ -296,10 +341,13 @@ class VAEModel(SRModel):
 
             gt_cube = visuals['gt']
             rec_cube = visuals['reconstruction']
+            # val_l_rec in arcsinh space — matches training l_rec for overfitting check
+            val_l_rec_sum += torch.nn.functional.l1_loss(rec_cube, gt_cube).item()
+
             norm = self.opt['datasets']['val'].get('norm', 'zscore')
             if norm == 'arcsinh':
                 gt_cube = torch.sinh(gt_cube)
-                rec_cube = torch.sinh(rec_cube)
+                rec_cube = torch.sinh(rec_cube.clamp(-10, 10))  # prevent sinh overflow on OOD outputs
             elif 'mean' in visuals:
                 gt_cube = gt_cube * visuals['std'] + visuals['mean']
                 rec_cube = rec_cube * visuals['std'] + visuals['mean']
@@ -307,9 +355,14 @@ class VAEModel(SRModel):
             metric_data['sr'] = rec_cube
             metric_data['hr'] = gt_cube
 
+            with torch.no_grad():
+                rmse_per_sample = ((rec_cube - gt_cube)**2).mean(dim=[1, 2, 3, 4]).sqrt()
+                per_sample_rmse.append(rmse_per_sample)
+                rec_std_ratio_sum += (rec_cube.std() / gt_cube.std().clamp(min=1e-6)).item()
+
             if save_img:
                 with torch.no_grad():
-                    rmse = ((rec_cube - gt_cube)**2).mean(dim=[1, 2, 3, 4]).sqrt()
+                    rmse = rmse_per_sample
                     k_gt, dsq_gt = calculate_power_spectrum(data_x=gt_cube, Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
                     k_rec, dsq_rec = calculate_power_spectrum(data_x=rec_cube, Lpix=3, kbins=100, dsq=True, method='torch', device='cpu')
 
@@ -330,11 +383,17 @@ class VAEModel(SRModel):
                         axes[1, i].imshow(rec_cube[i, 0, :, :, slice_idx].cpu().numpy(), vmin=vmin, vmax=vmax)
                         axes[1, i].set_title(f'Rec (RMSE={rmse[i].item():.2f})')
 
-                        xmin = min(rec_cube[i].min(), gt_cube[i].min())
-                        xmax = max(rec_cube[i].max(), gt_cube[i].max())
-                        bins = np.linspace(xmin, xmax, 100)
+                        # Anchor bins to GT range so extreme/OOD rec values don't squash the plot.
+                        # Rec values outside this range still show up in the first/last bin.
+                        gt_min = float(gt_cube[i].min())
+                        gt_max = float(gt_cube[i].max())
+                        margin = (gt_max - gt_min) * 0.05
+                        bins = np.linspace(gt_min - margin, gt_max + margin, 100)
                         axes[2, i].hist(gt_cube[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='GT', density=True)
                         axes[2, i].hist(rec_cube[i].cpu().numpy().flatten(), bins=bins, alpha=0.5, label='Rec', density=True)
+                        rec_mean = float(rec_cube[i].mean())
+                        if not (gt_min - margin <= rec_mean <= gt_max + margin):
+                            axes[2, i].axvline(rec_mean, color='orange', ls='--', lw=1, label=f'Rec mean={rec_mean:.0f}')
                         axes[2, i].set_xlabel(r'$T_{21}$ [mK]')
                         axes[2, i].legend()
 
@@ -369,6 +428,12 @@ class VAEModel(SRModel):
             self._log_validation_metric_values(current_iter, dataset_name, tb_logger)
 
         logger = get_root_logger()
+        n = idx + 1
+        all_rmse = torch.cat(per_sample_rmse)
+        logger.info(f'Validation diagnostics — '
+                    f'val_l_rec: {val_l_rec_sum / n:.4e}  '
+                    f'rmse_std: {all_rmse.std().item():.2f} mK  '
+                    f'rec_std/gt_std: {rec_std_ratio_sum / n:.3f}')
         logger.info(f'Finished validation on {dataset_name}')
 
 

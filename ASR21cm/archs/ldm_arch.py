@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import spectral_norm
 
 from basicsr.utils.registry import ARCH_REGISTRY
 
@@ -27,13 +28,22 @@ class NLayerDiscriminator3D(nn.Module):
         n_layers (int): Number of strided Conv3d downsampling layers.
     """
 
-    def __init__(self, input_nc=1, ndf=64, n_layers=3):
+    def __init__(self, input_nc=1, ndf=64, n_layers=3, use_spectral_norm=False):
         super().__init__()
 
         kw = 4
         padw = 1
+        wrap = spectral_norm if use_spectral_norm else (lambda x: x)
+
+        def conv_block(in_ch, out_ch, stride):
+            layers = [wrap(nn.Conv3d(in_ch, out_ch, kernel_size=kw, stride=stride, padding=padw, bias=use_spectral_norm))]
+            if not use_spectral_norm:
+                layers.append(Normalize(out_ch))
+            layers.append(nn.LeakyReLU(0.2, True))
+            return layers
+
         sequence = [
-            nn.Conv3d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
+            wrap(nn.Conv3d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)),
             nn.LeakyReLU(0.2, True),
         ]
 
@@ -41,21 +51,13 @@ class NLayerDiscriminator3D(nn.Module):
         for n in range(1, n_layers):
             nf_mult_prev = nf_mult
             nf_mult = min(2**n, 8)
-            sequence += [
-                nn.Conv3d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=False),
-                Normalize(ndf * nf_mult),
-                nn.LeakyReLU(0.2, True),
-            ]
+            sequence += conv_block(ndf * nf_mult_prev, ndf * nf_mult, stride=2)
 
         nf_mult_prev = nf_mult
         nf_mult = min(2**n_layers, 8)
-        sequence += [
-            nn.Conv3d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=False),
-            Normalize(ndf * nf_mult),
-            nn.LeakyReLU(0.2, True),
-        ]
+        sequence += conv_block(ndf * nf_mult_prev, ndf * nf_mult, stride=1)
 
-        sequence += [nn.Conv3d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]
+        sequence += [wrap(nn.Conv3d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw))]
         self.main = nn.Sequential(*sequence)
 
     def forward(self, x):

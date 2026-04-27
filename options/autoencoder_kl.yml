@@ -1,5 +1,5 @@
 # general settings
-name: AutoencoderKL_GAN_4
+name: AutoencoderKL_GAN_13
 model_type: VAEModel
 num_gpu: auto
 manual_seed: 0
@@ -9,25 +9,27 @@ datasets:
   train:
     name: T21train
     type: VAEDataset
-    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
+    dataroot_gt: datasets/varying_astro/T21_cubes/
     redshifts: [10,]
     run_id_range: [501, 2400]
     gt_size: 64  # random crop size
     norm: arcsinh
 
+    load_full_dataset: true
+
     # data loader
     use_shuffle: true
     num_worker_per_gpu: 4
-    batch_size_per_gpu: 4
+    batch_size_per_gpu: 12
     dataset_enlarge_ratio: 10
     prefetch_mode: ~
 
   val:
     name: T21val
     type: VAEDataset
-    dataroot_gt: /data/highz6/NewArchives/JitenDhandha/Diffusion_project/varying_astro/T21_cubes/
+    dataroot_gt: datasets/varying_astro/T21_cubes/
     redshifts: [10,]
-    run_id_range: [2401, 2410]
+    run_id_range: [2401, 2408]
     gt_size: 64
     norm: arcsinh
 
@@ -53,6 +55,7 @@ network_d:
   input_nc: 1      # must match network_g out_ch
   ndf: 32          # base number of discriminator filters
   n_layers: 3      # number of strided downsampling layers
+  use_spectral_norm: true
 
 # path
 path:
@@ -73,7 +76,7 @@ train:
     milestones: [50000, 100000]
     gamma: 1.0 # disable LR decay for now
 
-  total_iter: 200000
+  total_iter: 180000
   warmup_iter: -1
 
   # losses
@@ -81,17 +84,20 @@ train:
     type: L1Loss
     loss_weight: 1.0
     reduction: mean
-  # dsq_opt:
-  #  type: dsq_loss
-  #  loss_weight: 0.1
+  dsq_opt:
+    type: dsq_loss
+    loss_weight: 0.1
+  dsq_start: 120000
   kl_weight: !!float 1e-3
-  kl_anneal_iters: 1000   # linearly ramp kl_weight from 0 to kl_weight over this many iters
-  accum_iter: 4  # accumulate gradients over 4 iters to simulate batch size 4
+  kl_anneal_iters: 0       # 0 disables annealing (full weight from iter 0)
+  free_bits: 1.0     # min KL per latent dim (nats); set to 0 to disable
+  accum_iter: 1  # accumulate gradients over 4 iters to simulate batch size 4
   grad_clip: 5.0
   ema_decay: 0.999
 
   # GAN settings (used when network_d is defined)
-  disc_start: 250
+  disc_start: 70000
+  net_d_init_iters: 70200  # D trains alone for 200 iters before G sees GAN gradient
   disc_factor: 1.0
   disc_loss: hinge
   use_adaptive_weight: true
@@ -121,7 +127,7 @@ val:
 
 # logging settings
 logger:
-  print_freq: 100
+  print_freq: 50
   save_checkpoint_freq: !!float 5000
   use_tb_logger: true
   wandb:

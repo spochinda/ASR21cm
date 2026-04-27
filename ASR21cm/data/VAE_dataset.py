@@ -4,6 +4,7 @@ import pandas as pd
 import torch
 from scipy.io import loadmat
 from torch.utils import data as data
+from tqdm import tqdm
 
 from basicsr.utils.registry import DATASET_REGISTRY
 
@@ -127,7 +128,7 @@ class VAEDataset(data.Dataset):
     @torch.no_grad()
     def _preload(self):
         cubes = []
-        for _, row in self.df.iterrows():
+        for _, row in tqdm(self.df.iterrows(), total=len(self.df), desc='Loading dataset'):
             cubes.append(self._load_cube(row['T21']))
         self._T21_cache = cubes
 
