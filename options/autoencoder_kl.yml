@@ -43,19 +43,19 @@ network_g:
     resolution: 64
     in_channels: 1
     out_ch: 1
-    ch: 16
-    ch_mult: [1, 2, 4, 4]  # 3 downsamples: 64 -> 32 -> 16 -> 8
+    ch: 32
+    ch_mult: [1, 2, 4, 4]
     num_res_blocks: 2
     attn_resolutions: [8]
     dropout: 0.0
 
-# PatchGAN discriminator (comment out to disable GAN training)
+# PatchGAN discriminator (comment out network_d block to disable GAN training)
 network_d:
   type: NLayerDiscriminator3D
-  input_nc: 1      # must match network_g out_ch
-  ndf: 32          # base number of discriminator filters
-  n_layers: 3      # number of strided downsampling layers
-  use_spectral_norm: true
+  input_nc: 1               # must match network_g out_ch
+  ndf: 64                   # base number of discriminator filters
+  n_layers: 3               # number of strided downsampling layers
+  use_spectral_norm: false  # disabled — R1 gradient penalty handles stability
 
 # path
 path:
@@ -88,7 +88,7 @@ train:
     type: dsq_loss
     loss_weight: 0.1
   dsq_start: 120000
-  kl_weight: !!float 1e-3
+  kl_weight: !!float 3e-3
   kl_anneal_iters: 0       # 0 disables annealing (full weight from iter 0)
   free_bits: 1.0     # min KL per latent dim (nats); set to 0 to disable
   accum_iter: 1  # accumulate gradients over 4 iters to simulate batch size 4
@@ -96,12 +96,25 @@ train:
   ema_decay: 0.999
 
   # GAN settings (used when network_d is defined)
-  disc_start: 70000
-  net_d_init_iters: 70200  # D trains alone for 200 iters before G sees GAN gradient
+  disc_start: 70000         # train L1+KL only for nk iters before adding GAN
+  net_d_init_iters: 70200   # D trains alone for 200 iters before G sees GAN loss
   disc_factor: 1.0
   disc_loss: hinge
   use_adaptive_weight: true
-  disc_weight: 1.0
+  disc_weight: 1.0          # adaptive weight further scaled by calculate_adaptive_weight
+
+  # Discriminator feature matching loss
+  # Matches intermediate D activations between real and fake — acts as a
+  # learned multi-scale perceptual loss without a pretrained feature extractor.
+  use_feat_matching: true
+  feat_matching_weight: 10.0
+
+  # R1 gradient penalty (Mescheder et al. 2018)
+  # Penalises ||grad_x D(x)||^2 on real data; guarantees local GAN convergence.
+  # Lazy: fires every r1_interval iters, scaled by r1_interval to compensate.
+  use_r1: true
+  r1_gamma: 10.0            # regularisation strength (10 is standard)
+  r1_interval: 16           # apply every N iters (lazy regularisation)
 
   # learned log-variance for reconstruction loss (NLL formulation)
   use_logvar: false

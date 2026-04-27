@@ -20,12 +20,17 @@ class NLayerDiscriminator3D(nn.Module):
     Produces a spatial map of real/fake logits rather than a single scalar,
     so each output element covers a receptive-field 'patch' of the input.
     Uses GroupNorm (via Normalize()) instead of BatchNorm so it is stable
-    at batch_size=1.
+    at batch_size=1. When use_spectral_norm=True, GroupNorm is replaced by
+    spectral normalisation (compatible with R1 gradient penalty).
+
+    The architecture is split into named submodules (head / blocks / tail)
+    so that intermediate feature maps can be returned for feature-matching loss.
 
     Args:
-        input_nc (int): Number of input channels.
-        ndf      (int): Base number of discriminator filters.
-        n_layers (int): Number of strided Conv3d downsampling layers.
+        input_nc         (int):  Number of input channels.
+        ndf              (int):  Base number of discriminator filters.
+        n_layers         (int):  Number of strided Conv3d downsampling layers.
+        use_spectral_norm (bool): Replace GroupNorm with spectral norm on weights.
     """
 
     def __init__(self, input_nc=1, ndf=64, n_layers=3, use_spectral_norm=False):
@@ -40,28 +45,54 @@ class NLayerDiscriminator3D(nn.Module):
             if not use_spectral_norm:
                 layers.append(Normalize(out_ch))
             layers.append(nn.LeakyReLU(0.2, True))
-            return layers
+            return nn.Sequential(*layers)
 
-        sequence = [
+        # Head: first strided conv + activation (no norm layer)
+        self.head = nn.Sequential(
             wrap(nn.Conv3d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)),
             nn.LeakyReLU(0.2, True),
-        ]
+        )
 
+        # Intermediate downsampling + stride-1 blocks
+        blocks = []
         nf_mult = 1
         for n in range(1, n_layers):
             nf_mult_prev = nf_mult
             nf_mult = min(2**n, 8)
-            sequence += conv_block(ndf * nf_mult_prev, ndf * nf_mult, stride=2)
-
+            blocks.append(conv_block(ndf * nf_mult_prev, ndf * nf_mult, stride=2))
         nf_mult_prev = nf_mult
         nf_mult = min(2**n_layers, 8)
-        sequence += conv_block(ndf * nf_mult_prev, ndf * nf_mult, stride=1)
+        blocks.append(conv_block(ndf * nf_mult_prev, ndf * nf_mult, stride=1))
+        self.blocks = nn.ModuleList(blocks)
 
-        sequence += [wrap(nn.Conv3d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw))]
-        self.main = nn.Sequential(*sequence)
+        # Tail: final 1-channel logit projection (excluded from feature maps)
+        self.tail = wrap(nn.Conv3d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw))
 
-    def forward(self, x):
-        return self.main(x)
+    def forward(self, x, return_features=False):
+        """Forward pass.
+
+        Args:
+            x               (Tensor): Input volume.
+            return_features (bool):   If True, also return a list of intermediate
+                                      feature tensors (head output + each block
+                                      output, excluding the final logit).
+
+        Returns:
+            logit (Tensor): Spatial real/fake map.
+            features (list[Tensor]): Only returned when return_features=True.
+        """
+        features = []
+        x = self.head(x)
+        if return_features:
+            features.append(x)
+        for block in self.blocks:
+            x = block(x)
+            if return_features:
+                features.append(x)
+        logit = self.tail(x)
+        if return_features:
+            return logit, features
+        return logit
 
 
 class Upsample(nn.Module):

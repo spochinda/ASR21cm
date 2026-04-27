@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from collections import OrderedDict
 from os import path as osp
 from tqdm import tqdm
@@ -99,6 +100,15 @@ class VAEModel(SRModel):
             else:
                 raise ValueError(f'Unknown disc_loss type: {disc_loss_type}')
 
+            # --- discriminator feature matching loss ---
+            self.use_feat_matching = train_opt.get('use_feat_matching', False)
+            self.feat_matching_weight = train_opt.get('feat_matching_weight', 10.0)
+
+            # --- R1 gradient penalty ---
+            self.use_r1 = train_opt.get('use_r1', False)
+            self.r1_gamma = train_opt.get('r1_gamma', 10.0)
+            self.r1_interval = train_opt.get('r1_interval', 16)
+
         self.ema_decay = train_opt.get('ema_decay', 0)
         if self.ema_decay > 0:
             logger = get_root_logger()
@@ -155,7 +165,7 @@ class VAEModel(SRModel):
         rec_grads = torch.autograd.grad(rec_loss, last_layer, retain_graph=True)[0]
         g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
         d_weight = torch.norm(rec_grads) / (torch.norm(g_grads) + 1e-4)
-        d_weight = torch.clamp(d_weight, 0.0, 1.0).detach()
+        d_weight = torch.clamp(d_weight, 0.0, 1e2).detach()
         return d_weight * self.disc_weight
 
     def feed_data(self, data):
@@ -220,7 +230,19 @@ class VAEModel(SRModel):
             for p in self.net_d.parameters():
                 p.requires_grad = False
 
-            logits_fake = self.net_d(reconstruction.contiguous())
+            # Feature matching: run D on real (frozen) and fake to compare
+            # intermediate activations.  The fake forward pass is shared with
+            # the GAN loss so we only run D(fake) once.
+            if self.use_feat_matching:
+                _, feats_real = self.net_d(self.gt.detach(), return_features=True)
+                logits_fake, feats_fake = self.net_d(reconstruction.contiguous(), return_features=True)
+                # Real features are detached — no discriminator gradient
+                l_feat = sum(F.l1_loss(fr.detach(), ff) for fr, ff in zip(feats_real, feats_fake)) / len(feats_real)
+                l_g_total = l_g_total + self.feat_matching_weight * l_feat
+                loss_dict['l_feat'] = l_feat
+            else:
+                logits_fake = self.net_d(reconstruction.contiguous())
+
             g_loss = -torch.mean(logits_fake)
 
             if self.use_adaptive_weight:
@@ -261,6 +283,17 @@ class VAEModel(SRModel):
             logits_fake = self.net_d(reconstruction.contiguous().detach())
             d_loss = disc_factor * self.disc_loss_fn(logits_real, logits_fake)
             (d_loss / self.accum_iter).backward()
+
+            # R1 gradient penalty (Mescheder et al. 2018) — lazy: fires every
+            # r1_interval iters and is scaled up by r1_interval to compensate.
+            if self.use_r1 and current_iter % self.r1_interval == 0:
+                gt_r1 = self.gt.detach().requires_grad_(True)
+                logits_r1 = self.net_d(gt_r1.contiguous())
+                r1_grads = torch.autograd.grad(outputs=logits_r1.sum(), inputs=gt_r1, create_graph=True)[0]
+                r1_penalty = r1_grads.pow(2).flatten(1).sum(1).mean()
+                r1_loss = (self.r1_gamma / 2) * r1_penalty * self.r1_interval
+                (r1_loss / self.accum_iter).backward()
+                loss_dict['r1_penalty'] = r1_penalty.detach()
 
             if current_iter % self.accum_iter == 0:
                 self.optimizer_d.step()
